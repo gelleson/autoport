@@ -16,10 +16,11 @@ func TestExtractPortKeys(t *testing.T) {
 			name: "basic env",
 			content: `PORT=8080
 API_PORT=9090
+app_port=3333
 OTHER_VAR=123
 # DB_PORT=5432
 `,
-			wantKeys: []string{"PORT", "API_PORT"},
+			wantKeys: []string{"API_PORT", "PORT", "app_port"},
 		},
 		{
 			name: "spaces around equals",
@@ -45,5 +46,19 @@ OTHER_VAR=123
 				t.Errorf("ExtractPortKeys() = %v, want %v", got, tt.wantKeys)
 			}
 		})
+	}
+}
+
+func TestParse(t *testing.T) {
+	r := strings.NewReader(`
+MONITORING_URL="http://localhost:31413/rpc"
+app_port=3000
+`)
+	got := Parse(r)
+	if got["MONITORING_URL"] != "http://localhost:31413/rpc" {
+		t.Fatalf("unexpected MONITORING_URL value: %q", got["MONITORING_URL"])
+	}
+	if got["app_port"] != "3000" {
+		t.Fatalf("unexpected app_port value: %q", got["app_port"])
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Preset represents configuration overrides.
@@ -25,12 +26,22 @@ type ScannerConfig struct {
 	MaxDepth   int      `json:"max_depth,omitempty"`
 }
 
+// LinkRule describes how to rewrite a source URL key based on another repository's deterministic port.
+type LinkRule struct {
+	SourceKey       string `json:"source_key"`
+	TargetRepo      string `json:"target_repo"`
+	TargetPortKey   string `json:"target_port_key,omitempty"`
+	TargetNamespace string `json:"target_namespace,omitempty"`
+	SameBranch      *bool  `json:"same_branch,omitempty"`
+}
+
 // Config stores global and preset configurations.
 type Config struct {
 	Version  int               `json:"version,omitempty"`
 	Strict   bool              `json:"strict,omitempty"`
 	Scanner  ScannerConfig     `json:"scanner,omitempty"`
 	Presets  map[string]Preset `json:"presets"`
+	Links    []LinkRule        `json:"links,omitempty"`
 	Warnings []string          `json:"-"`
 	Errors   []error           `json:"-"`
 }
@@ -75,6 +86,9 @@ func Load(paths []string) *Config {
 		}
 		if localConfig.Scanner.MaxDepth > 0 {
 			cfg.Scanner.MaxDepth = localConfig.Scanner.MaxDepth
+		}
+		if localConfig.Links != nil {
+			cfg.Links = append([]LinkRule{}, localConfig.Links...)
 		}
 		cfg.Warnings = append(cfg.Warnings, localConfig.Warnings...)
 		cfg.Errors = append(cfg.Errors, localConfig.Errors...)
@@ -124,6 +138,17 @@ func loadFile(path string) (Config, bool) {
 			cfg.Presets[name] = preset
 		}
 	}
+	for i, link := range cfg.Links {
+		if strings.TrimSpace(link.SourceKey) == "" {
+			cfg.Errors = append(cfg.Errors, fmt.Errorf("links[%d].source_key is required", i))
+		}
+		if strings.TrimSpace(link.TargetRepo) == "" {
+			cfg.Errors = append(cfg.Errors, fmt.Errorf("links[%d].target_repo is required", i))
+		}
+		if link.TargetPortKey != "" && !isValidEnvVarName(link.TargetPortKey) {
+			cfg.Errors = append(cfg.Errors, fmt.Errorf("links[%d].target_port_key %q is invalid", i, link.TargetPortKey))
+		}
+	}
 
 	return cfg, true
 }
@@ -136,4 +161,26 @@ func mergePresets(dst, src map[string]Preset) {
 
 func (c *Config) HasErrors() bool {
 	return c != nil && len(c.Errors) > 0
+}
+
+func isValidEnvVarName(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i, r := range key {
+		isUpper := r >= 'A' && r <= 'Z'
+		isLower := r >= 'a' && r <= 'z'
+		isDigit := r >= '0' && r <= '9'
+		isUnderscore := r == '_'
+		if i == 0 {
+			if !(isUpper || isLower || isUnderscore) {
+				return false
+			}
+			continue
+		}
+		if !(isUpper || isLower || isDigit || isUnderscore) {
+			return false
+		}
+	}
+	return true
 }

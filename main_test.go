@@ -22,10 +22,14 @@ func TestParseCLIArgs_RunMode(t *testing.T) {
 		"-p", "db",
 		"-k", "WEB_PORT",
 		"-k", "API_PORT",
+		"-e", "../svc-b/.env",
+		"-e", "MONITORING_URL=../svc-b/.env:APP_PORT",
 		"--include", "PORT",
 		"--exclude", "DB_PORT",
 		"--namespace", "svc-a",
 		"--seed", "123",
+		"--seed-branch",
+		"--branch", "feature-x",
 		"--use-lock",
 		"-r", "3000-4000",
 		"-f", "json",
@@ -55,6 +59,12 @@ func TestParseCLIArgs_RunMode(t *testing.T) {
 	if opts.Seed == nil || *opts.Seed != 123 {
 		t.Fatalf("seed = %v", opts.Seed)
 	}
+	if !opts.SeedBranch {
+		t.Fatalf("expected seed-branch enabled")
+	}
+	if opts.Branch != "feature-x" {
+		t.Fatalf("branch = %q", opts.Branch)
+	}
 	if !opts.UseLock {
 		t.Fatal("expected use-lock true")
 	}
@@ -72,6 +82,9 @@ func TestParseCLIArgs_RunMode(t *testing.T) {
 	}
 	if !reflect.DeepEqual(opts.PortEnv, []string{"WEB_PORT", "API_PORT"}) {
 		t.Fatalf("parseCLIArgs() PortEnv = %v", opts.PortEnv)
+	}
+	if !reflect.DeepEqual(opts.TargetEnvSpecs, []string{"../svc-b/.env", "MONITORING_URL=../svc-b/.env:APP_PORT"}) {
+		t.Fatalf("parseCLIArgs() TargetEnvSpecs = %v", opts.TargetEnvSpecs)
 	}
 	if !reflect.DeepEqual(opts.Includes, []string{"PORT"}) {
 		t.Fatalf("parseCLIArgs() Includes = %v", opts.Includes)
@@ -104,6 +117,13 @@ func TestParseCLIArgs_InvalidFormat(t *testing.T) {
 	_, _, err := parseCLIArgs([]string{"-f", "xml"})
 	if err == nil {
 		t.Fatal("parseCLIArgs() expected error for invalid format")
+	}
+}
+
+func TestParseCLIArgs_InvalidTargetEnv(t *testing.T) {
+	_, _, err := parseCLIArgs([]string{"-e", "MONITORING_URL=../svc-b/.env:"})
+	if err == nil {
+		t.Fatal("parseCLIArgs() expected error for invalid -e spec")
 	}
 }
 

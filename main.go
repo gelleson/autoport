@@ -120,7 +120,10 @@ func parseCLIArgs(args []string) (app.Options, []string, error) {
 	var dryRun bool
 	var namespace string
 	var seed string
+	var branch string
+	var seedBranch bool
 	var useLock bool
+	var targetEnvs portEnvFlags
 
 	targetMode := "run"
 	if len(args) > 0 {
@@ -142,7 +145,11 @@ func parseCLIArgs(args []string) (app.Options, []string, error) {
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview mode: print planned overrides and do not execute command")
 	fs.StringVar(&namespace, "namespace", "", "Namespace for deterministic seed")
 	fs.StringVar(&seed, "seed", "", "Explicit deterministic seed (uint32)")
+	fs.StringVar(&branch, "branch", "", "Explicit branch name for branch-aware seed/link checks")
+	fs.BoolVar(&seedBranch, "seed-branch", false, "Include git branch name in deterministic seed material")
 	fs.BoolVar(&useLock, "use-lock", false, "Use .autoport.lock.json assignments")
+	fs.Var(&targetEnvs, "e", "Target env link spec: <path> or <SOURCE_KEY>=<path>[:<TARGET_PORT_KEY>] (repeatable)")
+	fs.Var(&targetEnvs, "target-env", "Target env link spec: <path> or <SOURCE_KEY>=<path>[:<TARGET_PORT_KEY>] (repeatable)")
 	fs.Var(&ignores, "i", "Ignore environment variables starting with this prefix (can be used multiple times)")
 	fs.Var(&presets, "p", "Apply a preset (built-in or from .autoport.json)")
 	fs.Var(&portEnv, "k", "Include a port environment key manually (can be used multiple times)")
@@ -157,6 +164,9 @@ func parseCLIArgs(args []string) (app.Options, []string, error) {
 	}
 
 	if err := validateFormat(targetMode, format); err != nil {
+		return app.Options{}, nil, err
+	}
+	if err := app.ValidateTargetEnvSpecs([]string(targetEnvs)); err != nil {
 		return app.Options{}, nil, err
 	}
 
@@ -176,20 +186,23 @@ func parseCLIArgs(args []string) (app.Options, []string, error) {
 	}
 
 	opts := app.Options{
-		Mode:      targetMode,
-		Ignores:   ignores,
-		Includes:  includes,
-		Excludes:  excludes,
-		Presets:   presets,
-		PortEnv:   portEnv,
-		Range:     *rangeFlag,
-		Format:    format,
-		Quiet:     quiet,
-		DryRun:    dryRun,
-		CWD:       cwd,
-		Namespace: namespace,
-		Seed:      seedPtr,
-		UseLock:   useLock,
+		Mode:           targetMode,
+		Ignores:        ignores,
+		Includes:       includes,
+		Excludes:       excludes,
+		Presets:        presets,
+		PortEnv:        portEnv,
+		Range:          *rangeFlag,
+		Format:         format,
+		Quiet:          quiet,
+		DryRun:         dryRun,
+		CWD:            cwd,
+		Namespace:      namespace,
+		Seed:           seedPtr,
+		Branch:         branch,
+		SeedBranch:     seedBranch,
+		TargetEnvSpecs: []string(targetEnvs),
+		UseLock:        useLock,
 	}
 	return opts, fs.Args(), nil
 }
@@ -220,13 +233,13 @@ func printHelp(w io.Writer, mode string) {
 	fmt.Fprintln(w)
 	switch mode {
 	case "explain":
-		fmt.Fprintln(w, "Explain flags: -r, -p, -i, --include, --exclude, -k, --namespace, --seed, -f text|json")
+		fmt.Fprintln(w, "Explain flags: -r, -p, -i, --include, --exclude, -k, --namespace, --seed, --seed-branch, --branch, -e, -f text|json")
 	case "doctor":
-		fmt.Fprintln(w, "Doctor flags: -r, -p, -i, --include, --exclude, -k, --namespace, --seed, --use-lock, -f text|json")
+		fmt.Fprintln(w, "Doctor flags: -r, -p, -i, --include, --exclude, -k, --namespace, --seed, --seed-branch, --branch, --use-lock, -f text|json")
 	case "lock":
-		fmt.Fprintln(w, "Lock flags: -r, -p, -i, --include, --exclude, -k, --namespace, --seed")
+		fmt.Fprintln(w, "Lock flags: -r, -p, -i, --include, --exclude, -k, --namespace, --seed, --seed-branch, --branch")
 	default:
-		fmt.Fprintln(w, "Run/export flags: -r, -p, -i, --include, --exclude, -k, --namespace, --seed, --use-lock, -f shell|json|dotenv|yaml, -q, -n")
+		fmt.Fprintln(w, "Run/export flags: -r, -p, -i, --include, --exclude, -k, -e, --namespace, --seed, --seed-branch, --branch, --use-lock, -f shell|json|dotenv|yaml, -q, -n")
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Examples:")

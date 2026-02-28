@@ -134,3 +134,19 @@ func TestScanner_ScanDetailed_StatsAndSources(t *testing.T) {
 		t.Fatalf("expected ignored directories count")
 	}
 }
+
+func TestScanner_CaseInsensitivePortKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("app_port=3000\nApi_Port=4000\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(tmpDir, WithEnviron([]string{}))
+	got, err := s.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Api_Port", "PORT", "app_port"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Scan() = %v, want %v", got, want)
+	}
+}

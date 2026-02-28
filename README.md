@@ -2,12 +2,13 @@
 
 `autoport` is a deterministic port wrapper for local development.
 
-It discovers `PORT` and `*_PORT` environment keys, assigns free ports based on your project path (and optional namespace), and can:
+It discovers `PORT` and `*_PORT` environment keys (case-insensitive), assigns free ports based on your project path (and optional namespace/branch), and can:
 - run your command with overrides,
 - print exports for your shell,
 - explain how assignments were produced,
 - diagnose configuration/environment issues,
-- and persist/consume lockfiles.
+- persist/consume lockfiles,
+- and rewrite localhost URL env vars from linked repos.
 
 ## Why use it
 
@@ -103,6 +104,9 @@ Execution flags:
 - `-n, -dry-run`: Preview overrides without executing
 - `--namespace <name>`: Namespace salt for deterministic seed
 - `--seed <uint32>`: Explicit deterministic seed
+- `--seed-branch`: Include current git branch in seed material (opt-in)
+- `--branch <name>`: Explicit branch override for branch-aware seed/link checks
+- `-e, --target-env <spec>`: Link target env file. Smart: `<path>`, explicit: `<SOURCE_KEY>=<path>[:<TARGET_PORT_KEY>]` (repeatable)
 - `--use-lock`: Use `.autoport.lock.json` assignments (opt-in)
 
 Formats:
@@ -119,9 +123,11 @@ Formats:
 ### `autoport explain`
 Shows:
 - effective inputs (range/presets/filters/seed),
+- branch-aware seed inputs,
 - discovered keys and source (`env`, `.env`, `.env.local`, `default`, `manual`),
 - inclusion/exclusion decisions,
-- final assignments (`preferred`, `assigned`, `probes`).
+- final assignments (`preferred`, `assigned`, `probes`),
+- link rewrites (`source_key`, old/new URL, target repo/key, source=`lockfile|deterministic`).
 
 ### `autoport doctor`
 Runs diagnostics for:
@@ -161,6 +167,15 @@ Writes `.autoport.lock.json` with:
     "ignore_dirs": ["node_modules", "vendor"],
     "max_depth": 4
   },
+  "links": [
+    {
+      "source_key": "MONITORING_URL",
+      "target_repo": "../service-b",
+      "target_port_key": "APP_PORT",
+      "target_namespace": "worker",
+      "same_branch": true
+    }
+  ],
   "presets": {
     "web": {
       "range": "8000-9000",
@@ -175,6 +190,12 @@ Writes `.autoport.lock.json` with:
 Built-in presets:
 - `db`: ignores database-style prefixes (`DB`, `DATABASE`, `POSTGRES`, `MYSQL`, `MONGO`, `REDIS`, `MEMCACHED`, `ES`, `CLICKHOUSE`, `INFLUX`)
 - `queues`: excludes common broker ports (`RABBITMQ_PORT`, `AMQP_PORT`, `NATS_PORT`, `KAFKA_PORT`, `PULSAR_PORT`, `ACTIVEMQ_PORT`, `ARTEMIS_PORT`, `SQS_PORT`, `NSQ_PORT`, `RSMQ_PORT`, `BEANSTALKD_PORT`)
+
+Link behavior defaults:
+- URL rewrite scope is `localhost` / `127.0.0.1` URLs only.
+- For target key selection, default is `APP_PORT` then `PORT` (case-insensitive).
+- If target lockfile contains the key, that value is used; otherwise deterministic preferred port is used.
+- On unresolved links (missing key, branch mismatch, parse issues), autoport warns and keeps original value.
 
 ### Migration compatibility
 
@@ -205,4 +226,6 @@ See [Migration Guide](docs/MIGRATION_V1.md).
 - `internal/scanner`: key discovery + scan stats + source tracking
 - `internal/config`: v2 config loading, merging, migration warnings
 - `internal/lockfile`: lockfile read/write/fingerprint
+- `internal/linkspec`: parsing for `-e/--target-env` specs
+- `internal/gitbranch`: branch resolution helper for seed/link checks
 - `pkg/port`: range parsing, seed derivation, deterministic allocation

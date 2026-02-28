@@ -84,15 +84,27 @@ func parseCLIArgs(args []string) (app.Options, []string, error) {
 	var ignores ignoreFlags
 	var presets presetFlags
 	var portEnv portEnvFlags
+	var format string
+	var quiet bool
+	var dryRun bool
 
 	fs := flag.NewFlagSet("autoport", flag.ExitOnError)
 	rangeFlag := fs.String("r", "", "Port range to use (e.g., 3000-4000). Default is 10000-20000.")
+	fs.StringVar(&format, "f", "shell", "Output format: shell or json")
+	fs.StringVar(&format, "format", "shell", "Output format: shell or json")
+	fs.BoolVar(&quiet, "q", false, "Suppress command-mode override summary output")
+	fs.BoolVar(&quiet, "quiet", false, "Suppress command-mode override summary output")
+	fs.BoolVar(&dryRun, "n", false, "Preview mode: print planned overrides and do not execute command")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview mode: print planned overrides and do not execute command")
 	fs.Var(&ignores, "i", "Ignore environment variables starting with this prefix (can be used multiple times)")
 	fs.Var(&presets, "p", "Apply a preset (built-in or from .autoport.json)")
 	fs.Var(&portEnv, "k", "Include a port environment key manually (can be used multiple times)")
 
 	if err := fs.Parse(args); err != nil {
 		return app.Options{}, nil, err
+	}
+	if format != "shell" && format != "json" {
+		return app.Options{}, nil, fmt.Errorf("invalid format %q, expected shell or json", format)
 	}
 
 	cwd, err := os.Getwd()
@@ -105,6 +117,9 @@ func parseCLIArgs(args []string) (app.Options, []string, error) {
 		Presets: presets,
 		PortEnv: portEnv,
 		Range:   *rangeFlag,
+		Format:  format,
+		Quiet:   quiet,
+		DryRun:  dryRun,
 		CWD:     cwd,
 	}
 	return opts, fs.Args(), nil

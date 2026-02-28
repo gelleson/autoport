@@ -3,6 +3,8 @@
 package e2e_test
 
 import (
+	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,7 +28,18 @@ func buildAutoportBinary(t *testing.T) string {
 	return binPath
 }
 
+func requireTCPBindCapability(t *testing.T) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("skipping e2e test: tcp bind unavailable: %v", err)
+	}
+	_ = ln.Close()
+}
+
 func TestE2E_ExportsPortWhenNoEnvFound(t *testing.T) {
+	requireTCPBindCapability(t)
+
 	binPath := buildAutoportBinary(t)
 	projectDir := t.TempDir()
 
@@ -52,6 +65,8 @@ func TestE2E_ExportsPortWhenNoEnvFound(t *testing.T) {
 }
 
 func TestE2E_ManualPortKeyIsAppliedToCommand(t *testing.T) {
+	requireTCPBindCapability(t)
+
 	binPath := buildAutoportBinary(t)
 	projectDir := t.TempDir()
 
@@ -90,6 +105,8 @@ func TestE2E_ManualInvalidPortKeyFails(t *testing.T) {
 }
 
 func TestE2E_PortRangeFlag(t *testing.T) {
+	requireTCPBindCapability(t)
+
 	binPath := buildAutoportBinary(t)
 	projectDir := t.TempDir()
 
@@ -112,6 +129,8 @@ func TestE2E_PortRangeFlag(t *testing.T) {
 }
 
 func TestE2E_IgnoreFlag(t *testing.T) {
+	requireTCPBindCapability(t)
+
 	binPath := buildAutoportBinary(t)
 	projectDir := t.TempDir()
 
@@ -154,6 +173,8 @@ func TestE2E_IgnoreFlag(t *testing.T) {
 }
 
 func TestE2E_PresetFlag(t *testing.T) {
+	requireTCPBindCapability(t)
+
 	binPath := buildAutoportBinary(t)
 	projectDir := t.TempDir()
 
@@ -185,6 +206,8 @@ func TestE2E_PresetFlag(t *testing.T) {
 }
 
 func TestE2E_ConfigPreset(t *testing.T) {
+	requireTCPBindCapability(t)
+
 	binPath := buildAutoportBinary(t)
 	projectDir := t.TempDir()
 
@@ -222,5 +245,75 @@ func TestE2E_ConfigPreset(t *testing.T) {
 	}
 	if !strings.Contains(outStr, "export YOUR_PORT=") {
 		t.Fatalf("expected YOUR_PORT to be included, found in:\n%s", outStr)
+	}
+}
+
+func TestE2E_JSONExport(t *testing.T) {
+	requireTCPBindCapability(t)
+
+	binPath := buildAutoportBinary(t)
+	projectDir := t.TempDir()
+
+	cmd := exec.Command(binPath, "-f", "json")
+	cmd.Dir = projectDir
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("run autoport json export: %v", err)
+	}
+
+	var payload struct {
+		Mode      string `json:"mode"`
+		Overrides []struct {
+			Key string `json:"key"`
+		} `json:"overrides"`
+	}
+	if err := json.Unmarshal(output, &payload); err != nil {
+		t.Fatalf("parse json output: %v\n%s", err, string(output))
+	}
+	if payload.Mode != "export" {
+		t.Fatalf("expected export mode, got %q", payload.Mode)
+	}
+	if len(payload.Overrides) == 0 {
+		t.Fatalf("expected overrides in output, got %s", string(output))
+	}
+}
+
+func TestE2E_QuietSuppressesSummary(t *testing.T) {
+	requireTCPBindCapability(t)
+
+	binPath := buildAutoportBinary(t)
+	projectDir := t.TempDir()
+
+	cmd := exec.Command(binPath, "-q", "sh", "-c", "echo ok")
+	cmd.Dir = projectDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run autoport quiet mode: %v\n%s", err, string(output))
+	}
+
+	if strings.TrimSpace(string(output)) != "ok" {
+		t.Fatalf("expected only command output, got %q", string(output))
+	}
+}
+
+func TestE2E_DryRunDoesNotExecuteCommand(t *testing.T) {
+	requireTCPBindCapability(t)
+
+	binPath := buildAutoportBinary(t)
+	projectDir := t.TempDir()
+	marker := filepath.Join(projectDir, "ran.txt")
+
+	cmd := exec.Command(binPath, "-n", "sh", "-c", "echo ran > ran.txt")
+	cmd.Dir = projectDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run autoport dry-run mode: %v\n%s", err, string(output))
+	}
+
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatalf("expected command not to execute in dry-run mode")
+	}
+	if !strings.Contains(string(output), "autoport overrides") {
+		t.Fatalf("expected preview summary output, got:\n%s", string(output))
 	}
 }

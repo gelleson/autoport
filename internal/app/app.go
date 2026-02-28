@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,6 +23,9 @@ type Options struct {
 	Presets []string
 	PortEnv []string
 	Range   string
+	Format  string
+	Quiet   bool
+	DryRun  bool
 	CWD     string
 }
 
@@ -112,6 +116,14 @@ func New(opts ...AppOption) *App {
 
 // Run executes the main application workflow.
 func (a *App) Run(ctx context.Context, opts Options, args []string) error {
+	format := opts.Format
+	if format == "" {
+		format = "shell"
+	}
+	if format != "shell" && format != "json" {
+		return fmt.Errorf("format: invalid format %q, expected shell or json", format)
+	}
+
 	finalIgnores, finalRange := a.resolvePresetOverrides(opts)
 	r, err := port.ParseRange(finalRange)
 	if err != nil {
@@ -133,14 +145,33 @@ func (a *App) Run(ctx context.Context, opts Options, args []string) error {
 	}
 
 	if len(args) == 0 {
-		a.printExports(overrides)
+		mode := "export"
+		if opts.DryRun {
+			mode = "preview"
+		}
+		a.printPrimaryOutput(format, mode, opts.CWD, finalRange, nil, overrides)
+		return nil
+	}
+
+	if opts.DryRun {
+		if format == "json" {
+			a.printJSONOutput(a.stdout, "preview", opts.CWD, finalRange, args, overrides)
+		} else {
+			a.printOverrideSummary(args[0], args[1:], overrides)
+		}
 		return nil
 	}
 
 	env := a.buildExecEnv(overrides)
 	cmdName := args[0]
 	cmdArgs := args[1:]
-	a.printOverrideSummary(cmdName, cmdArgs, overrides)
+	if !opts.Quiet {
+		if format == "json" {
+			a.printJSONOutput(a.stderr, "execute", opts.CWD, finalRange, args, overrides)
+		} else {
+			a.printOverrideSummary(cmdName, cmdArgs, overrides)
+		}
+	}
 	return a.executor.Run(ctx, cmdName, cmdArgs, env, a.stdout, a.stderr)
 }
 
@@ -207,6 +238,53 @@ func (a *App) printExports(overrides map[string]string) {
 	keys := sortedKeys(overrides)
 	for _, key := range keys {
 		fmt.Fprintf(a.stdout, "export %s=%s\n", key, overrides[key])
+	}
+}
+
+type outputBinding struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+type outputPayload struct {
+	Mode      string          `json:"mode"`
+	CWD       string          `json:"cwd"`
+	Range     string          `json:"range"`
+	Command   []string        `json:"command,omitempty"`
+	Overrides []outputBinding `json:"overrides"`
+}
+
+func (a *App) printPrimaryOutput(format, mode, cwd, rangeSpec string, command []string, overrides map[string]string) {
+	if format == "json" {
+		a.printJSONOutput(a.stdout, mode, cwd, rangeSpec, command, overrides)
+		return
+	}
+	a.printExports(overrides)
+}
+
+func (a *App) printJSONOutput(w io.Writer, mode, cwd, rangeSpec string, command []string, overrides map[string]string) {
+	bindings := make([]outputBinding, 0, len(overrides))
+	keys := sortedKeys(overrides)
+	for _, key := range keys {
+		bindings = append(bindings, outputBinding{
+			Key:   key,
+			Value: overrides[key],
+		})
+	}
+
+	payload := outputPayload{
+		Mode:      mode,
+		CWD:       cwd,
+		Range:     rangeSpec,
+		Overrides: bindings,
+	}
+	if len(command) > 0 {
+		payload.Command = append([]string{}, command...)
+	}
+
+	enc := json.NewEncoder(w)
+	if err := enc.Encode(payload); err != nil {
+		a.logger.Error("failed to encode JSON output", slog.String("error", err.Error()))
 	}
 }
 

@@ -88,3 +88,23 @@ autoport go test ./...
 ```
 
 Useful when parallel jobs share a host and default ports might collide.
+
+## JSON output for scripting
+
+```bash
+autoport -f json
+```
+
+## Quiet command mode
+
+Suppress autoport's command summary and only print command output:
+
+```bash
+autoport -q npm start
+```
+
+## Preview command overrides without executing
+
+```bash
+autoport -n npm start
+```

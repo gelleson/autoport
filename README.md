@@ -56,10 +56,15 @@ Flags:
 - `-p <name>`: Preset name (repeatable)
 - `-i <prefix>`: Ignore env keys starting with prefix (repeatable)
 - `-k <env_key>`: Include a port env key manually (repeatable), e.g. `WEB_PORT`
+- `-f, -format <shell|json>`: Output format (default: `shell`)
+- `-q, -quiet`: Suppress command-mode override summaries
+- `-n, -dry-run`: Preview resolved overrides without executing the command
 
 Behavior:
 - With `command`: executes command with port overrides in process env and prints a summary to `stderr`
 - Without `command`: prints `export KEY=value` lines sorted by key
+- With `-f json`: emits structured JSON instead of shell exports/table summaries
+- With `-n`: prints preview output and exits `0` without running the command
 
 ## Configuration
 

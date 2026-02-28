@@ -14,7 +14,8 @@
 CLI args -> parse flags -> resolve presets/range/ignores
         -> scan env + .env files for port keys
         -> allocate deterministic free ports
-        -> print exports OR execute subcommand with env overrides
+        -> render output (shell/json, export/preview/summary)
+        -> optionally execute subcommand with env overrides
 ```
 
 ## Components
@@ -27,7 +28,8 @@ CLI args -> parse flags -> resolve presets/range/ignores
 - Resolves effective ignores and range from flags + presets
 - Invokes scanner to discover keys
 - Uses `pkg/port.Allocator` to assign ports
-- Either prints sorted exports or executes subcommand
+- Renders shell or JSON outputs for export, preview (`-n`), and command summaries
+- Executes subcommand unless dry-run mode is enabled
 
 ### `internal/scanner`
 - Reads current process environment

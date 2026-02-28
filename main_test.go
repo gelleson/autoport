@@ -19,6 +19,9 @@ func TestParseCLIArgs(t *testing.T) {
 		"-k", "WEB_PORT",
 		"-k", "API_PORT",
 		"-r", "3000-4000",
+		"-f", "json",
+		"-q",
+		"-n",
 		"npm", "start",
 	})
 	if err != nil {
@@ -31,6 +34,15 @@ func TestParseCLIArgs(t *testing.T) {
 	if opts.Range != "3000-4000" {
 		t.Fatalf("parseCLIArgs() Range = %s, want 3000-4000", opts.Range)
 	}
+	if opts.Format != "json" {
+		t.Fatalf("parseCLIArgs() Format = %s, want json", opts.Format)
+	}
+	if !opts.Quiet {
+		t.Fatal("parseCLIArgs() Quiet = false, want true")
+	}
+	if !opts.DryRun {
+		t.Fatal("parseCLIArgs() DryRun = false, want true")
+	}
 	if !reflect.DeepEqual(opts.Ignores, []string{"REDIS_", "DB_"}) {
 		t.Fatalf("parseCLIArgs() Ignores = %v", opts.Ignores)
 	}
@@ -42,5 +54,12 @@ func TestParseCLIArgs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cmdArgs, []string{"npm", "start"}) {
 		t.Fatalf("parseCLIArgs() args = %v", cmdArgs)
+	}
+}
+
+func TestParseCLIArgs_InvalidFormat(t *testing.T) {
+	_, _, err := parseCLIArgs([]string{"-f", "yaml"})
+	if err == nil {
+		t.Fatal("parseCLIArgs() expected error for invalid format")
 	}
 }

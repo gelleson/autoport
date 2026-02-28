@@ -58,7 +58,7 @@ Flags:
 - `-k <env_key>`: Include a port env key manually (repeatable), e.g. `WEB_PORT`
 
 Behavior:
-- With `command`: executes command with port overrides in process env
+- With `command`: executes command with port overrides in process env and prints a summary to `stderr`
 - Without `command`: prints `export KEY=value` lines sorted by key
 
 ## Configuration
@@ -96,6 +96,18 @@ Built-in presets:
 - [Architecture](docs/ARCHITECTURE.md)
 - [Examples](docs/EXAMPLES.md)
 - [Contributing](CONTRIBUTING.md)
+
+## CI/CD
+
+- CI runs on every pull request and on pushes to `main`:
+  - `gofmt` check
+  - `go vet ./...`
+  - `go test ./...`
+  - `go build ./...`
+- CD runs on tags matching `v*` (for example `v1.0.0`) and creates a GitHub Release with binaries for:
+  - Linux (`amd64`, `arm64`)
+  - macOS (`amd64`, `arm64`)
+  - Windows (`amd64`)
 
 ## Project Layout
 

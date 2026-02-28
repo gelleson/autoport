@@ -55,10 +55,12 @@ func TestApp_Run_Export(t *testing.T) {
 func TestApp_Run_Command(t *testing.T) {
 	mockExec := &MockExecutor{}
 	var stdout bytes.Buffer
+	var stderr bytes.Buffer
 	app := New(
 		WithConfig(&config.Config{}),
 		WithExecutor(mockExec),
 		WithStdout(&stdout),
+		WithStderr(&stderr),
 		WithEnviron([]string{"PORT=8080"}),
 		WithIsFree(func(p int) bool { return true }),
 	)
@@ -86,6 +88,20 @@ func TestApp_Run_Command(t *testing.T) {
 	}
 	if !foundPortOverride {
 		t.Errorf("Expected PORT override")
+	}
+
+	logOutput := stderr.String()
+	if !strings.Contains(logOutput, "autoport overrides") {
+		t.Fatalf("Expected override summary in stderr, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "npm start") {
+		t.Fatalf("Expected command context in stderr, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "| ENV") {
+		t.Fatalf("Expected table header in stderr, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "| PORT") {
+		t.Fatalf("Expected PORT in override summary, got: %s", logOutput)
 	}
 }
 

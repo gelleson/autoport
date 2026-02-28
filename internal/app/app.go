@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/gelleson/autoport/internal/config"
 	"github.com/gelleson/autoport/internal/scanner"
@@ -48,6 +49,7 @@ type App struct {
 	config   *config.Config
 	executor Executor
 	stdout   io.Writer
+	stderr   io.Writer
 	logger   *slog.Logger
 	environ  []string
 	isFree   port.IsFreeFunc
@@ -71,6 +73,11 @@ func WithStdout(w io.Writer) AppOption {
 	return func(a *App) { a.stdout = w }
 }
 
+// WithStderr sets the standard error writer.
+func WithStderr(w io.Writer) AppOption {
+	return func(a *App) { a.stderr = w }
+}
+
 // WithLogger sets the logger.
 func WithLogger(l *slog.Logger) AppOption {
 	return func(a *App) { a.logger = l }
@@ -92,6 +99,7 @@ func New(opts ...AppOption) *App {
 		config:   config.LoadDefault(),
 		executor: DefaultExecutor{},
 		stdout:   os.Stdout,
+		stderr:   os.Stderr,
 		logger:   slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
 		environ:  os.Environ(),
 		isFree:   port.DefaultIsFree,
@@ -132,7 +140,8 @@ func (a *App) Run(ctx context.Context, opts Options, args []string) error {
 	env := a.buildExecEnv(overrides)
 	cmdName := args[0]
 	cmdArgs := args[1:]
-	return a.executor.Run(ctx, cmdName, cmdArgs, env, a.stdout, os.Stderr)
+	a.printOverrideSummary(cmdName, cmdArgs, overrides)
+	return a.executor.Run(ctx, cmdName, cmdArgs, env, a.stdout, a.stderr)
 }
 
 func (a *App) resolvePresetOverrides(opts Options) (ignores []string, rangeSpec string) {
@@ -207,6 +216,36 @@ func (a *App) buildExecEnv(overrides map[string]string) []string {
 		env = append(env, fmt.Sprintf("%s=%s", key, value))
 	}
 	return env
+}
+
+func (a *App) printOverrideSummary(cmdName string, cmdArgs []string, overrides map[string]string) {
+	keys := sortedKeys(overrides)
+
+	keyWidth := len("ENV")
+	valueWidth := len("PORT")
+	for _, key := range keys {
+		if len(key) > keyWidth {
+			keyWidth = len(key)
+		}
+		if len(overrides[key]) > valueWidth {
+			valueWidth = len(overrides[key])
+		}
+	}
+
+	command := cmdName
+	if len(cmdArgs) > 0 {
+		command = fmt.Sprintf("%s %s", cmdName, strings.Join(cmdArgs, " "))
+	}
+
+	border := fmt.Sprintf("+-%s-+-%s-+\n", strings.Repeat("-", keyWidth), strings.Repeat("-", valueWidth))
+	fmt.Fprintf(a.stderr, "\nautoport overrides (%d) -> %s\n", len(keys), command)
+	fmt.Fprint(a.stderr, border)
+	fmt.Fprintf(a.stderr, "| %-*s | %-*s |\n", keyWidth, "ENV", valueWidth, "PORT")
+	fmt.Fprint(a.stderr, border)
+	for _, key := range keys {
+		fmt.Fprintf(a.stderr, "| %-*s | %-*s |\n", keyWidth, key, valueWidth, overrides[key])
+	}
+	fmt.Fprint(a.stderr, border)
 }
 
 func sortedKeys(values map[string]string) []string {

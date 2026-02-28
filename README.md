@@ -103,6 +103,7 @@ Built-in presets:
   - `gofmt` check
   - `go vet ./...`
   - `go test ./...`
+  - `go test -tags e2e ./e2e -v`
   - `go build ./...`
 - CD runs on tags matching `v*` (for example `v1.0.0`) and creates a GitHub Release with binaries for:
   - Linux (`amd64`, `arm64`)

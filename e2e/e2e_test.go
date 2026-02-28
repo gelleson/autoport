@@ -317,3 +317,161 @@ func TestE2E_DryRunDoesNotExecuteCommand(t *testing.T) {
 		t.Fatalf("expected preview summary output, got:\n%s", string(output))
 	}
 }
+
+func TestE2E_ExplainJSON(t *testing.T) {
+	requireTCPBindCapability(t)
+
+	binPath := buildAutoportBinary(t)
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte("WEB_PORT=3000\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(binPath, "explain", "-f", "json")
+	cmd.Dir = projectDir
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("run explain: %v", err)
+	}
+
+	var payload struct {
+		Mode        string `json:"mode"`
+		Assignments []struct {
+			Key string `json:"key"`
+		} `json:"assignments"`
+	}
+	if err := json.Unmarshal(output, &payload); err != nil {
+		t.Fatalf("parse explain output: %v", err)
+	}
+	if payload.Mode != "explain" {
+		t.Fatalf("mode=%q", payload.Mode)
+	}
+	if len(payload.Assignments) == 0 {
+		t.Fatalf("expected assignments")
+	}
+}
+
+func TestE2E_DoctorWarningsExitOne(t *testing.T) {
+	requireTCPBindCapability(t)
+
+	binPath := buildAutoportBinary(t)
+	projectDir := t.TempDir()
+	// Small range should trigger warning.
+	cmd := exec.Command(binPath, "doctor", "-r", "10000-10002")
+	cmd.Dir = projectDir
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected warning exit")
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("expected ExitError, got %T", err)
+	}
+	if exitErr.ExitCode() != 1 {
+		t.Fatalf("expected exit code 1, got %d\n%s", exitErr.ExitCode(), string(output))
+	}
+}
+
+func TestE2E_NamespaceChangesPort(t *testing.T) {
+	requireTCPBindCapability(t)
+
+	binPath := buildAutoportBinary(t)
+	projectDir := t.TempDir()
+
+	cmdA := exec.Command(binPath, "--namespace", "svc-a", "-k", "WEB_PORT", "sh", "-c", "echo $WEB_PORT")
+	cmdA.Dir = projectDir
+	outA, err := cmdA.Output()
+	if err != nil {
+		t.Fatalf("namespace a run: %v", err)
+	}
+
+	cmdB := exec.Command(binPath, "--namespace", "svc-b", "-k", "WEB_PORT", "sh", "-c", "echo $WEB_PORT")
+	cmdB.Dir = projectDir
+	outB, err := cmdB.Output()
+	if err != nil {
+		t.Fatalf("namespace b run: %v", err)
+	}
+
+	if strings.TrimSpace(string(outA)) == strings.TrimSpace(string(outB)) {
+		t.Fatalf("expected different ports for different namespaces, got %q", string(outA))
+	}
+}
+
+func TestE2E_LockAndUseLock(t *testing.T) {
+	requireTCPBindCapability(t)
+
+	binPath := buildAutoportBinary(t)
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte("WEB_PORT=3000\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	lockCmd := exec.Command(binPath, "lock", "-r", "12000-12010")
+	lockCmd.Dir = projectDir
+	if output, err := lockCmd.CombinedOutput(); err != nil {
+		t.Fatalf("lock command failed: %v\n%s", err, string(output))
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".autoport.lock.json")); err != nil {
+		t.Fatalf("expected lockfile: %v", err)
+	}
+
+	useCmd := exec.Command(binPath, "--use-lock", "-f", "json")
+	useCmd.Dir = projectDir
+	output, err := useCmd.Output()
+	if err != nil {
+		t.Fatalf("use-lock command failed: %v", err)
+	}
+
+	var payload struct {
+		Overrides []struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		} `json:"overrides"`
+	}
+	if err := json.Unmarshal(output, &payload); err != nil {
+		t.Fatalf("parse output: %v", err)
+	}
+	if len(payload.Overrides) == 0 {
+		t.Fatalf("expected overrides")
+	}
+	if payload.Overrides[0].Value < "12000" || payload.Overrides[0].Value > "12010" {
+		t.Fatalf("expected lock-range value, got %s", payload.Overrides[0].Value)
+	}
+}
+
+func TestE2E_ScannerIgnoreDirsAndMaxDepth(t *testing.T) {
+	requireTCPBindCapability(t)
+
+	binPath := buildAutoportBinary(t)
+	projectDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectDir, "node_modules", "x"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "node_modules", ".env"), []byte("HIDDEN_PORT=3000\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte("VISIBLE_PORT=3001\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{
+  "version": 2,
+  "scanner": {"ignore_dirs": ["node_modules"], "max_depth": 1}
+}`
+	if err := os.WriteFile(filepath.Join(projectDir, ".autoport.json"), []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(binPath)
+	cmd.Dir = projectDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(output))
+	}
+	out := string(output)
+	if strings.Contains(out, "export HIDDEN_PORT=") {
+		t.Fatalf("HIDDEN_PORT should be ignored: %s", out)
+	}
+	if !strings.Contains(out, "export VISIBLE_PORT=") {
+		t.Fatalf("VISIBLE_PORT missing: %s", out)
+	}
+}

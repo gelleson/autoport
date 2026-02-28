@@ -16,6 +16,7 @@ func TestParseRange(t *testing.T) {
 		{"invalid start", "abc-4000", Range{}, true},
 		{"invalid end", "3000-abc", Range{}, true},
 		{"start > end", "4000-3000", Range{}, true},
+		{"port bounds", "0-70000", Range{}, true},
 	}
 
 	for _, tt := range tests {
@@ -42,6 +43,17 @@ func TestHashPath(t *testing.T) {
 	}
 	if hash1 != hash3 {
 		t.Errorf("HashPath() not deterministic for same path")
+	}
+}
+
+func TestSeedFor(t *testing.T) {
+	plain := SeedFor("/repo/a", "")
+	ns := SeedFor("/repo/a", "svc-a")
+	if plain == ns {
+		t.Fatalf("namespace should alter seed")
+	}
+	if ns != SeedFor("/repo/a", "svc-a") {
+		t.Fatalf("seed must be deterministic")
 	}
 }
 
@@ -73,12 +85,15 @@ func TestAllocator_PortFor(t *testing.T) {
 				return p != expectedPort // Only the first expected one is taken
 			},
 		}
-		p, err := a.PortFor(0)
+		p, _, probes, err := a.PortForWithStats(0)
 		if err != nil {
 			t.Errorf("PortFor() unexpected error: %v", err)
 		}
 		if p == expectedPort {
 			t.Errorf("PortFor() returned taken port")
+		}
+		if probes != 1 {
+			t.Fatalf("probes = %d, want 1", probes)
 		}
 	})
 

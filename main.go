@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -69,6 +70,10 @@ func main() {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
+		if exitErr, ok := err.(interface{ ExitCode() int }); ok {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(exitErr.ExitCode())
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -80,7 +85,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if isVersionCommand(cmdArgs) {
+	if opts.Mode == "version" || isVersionCommand(cmdArgs) {
 		fmt.Fprintln(os.Stdout, versionString())
 		return nil
 	}
@@ -101,27 +106,58 @@ func parseCLIArgs(args []string) (app.Options, []string, error) {
 	var ignores ignoreFlags
 	var presets presetFlags
 	var portEnv portEnvFlags
+	var includes portEnvFlags
+	var excludes portEnvFlags
 	var format string
 	var quiet bool
 	var dryRun bool
+	var namespace string
+	var seed string
+	var useLock bool
 
-	fs := flag.NewFlagSet("autoport", flag.ExitOnError)
+	targetMode := "run"
+	if len(args) > 0 {
+		switch args[0] {
+		case "version", "explain", "doctor", "lock":
+			targetMode = args[0]
+			args = args[1:]
+		}
+	}
+
+	fs := flag.NewFlagSet("autoport", flag.ContinueOnError)
+	fs.SetOutput(ioDiscard{})
 	rangeFlag := fs.String("r", "", "Port range to use (e.g., 3000-4000). Default is 10000-20000.")
-	fs.StringVar(&format, "f", "shell", "Output format: shell or json")
-	fs.StringVar(&format, "format", "shell", "Output format: shell or json")
+	fs.StringVar(&format, "f", defaultFormatForMode(targetMode), "Output format")
+	fs.StringVar(&format, "format", defaultFormatForMode(targetMode), "Output format")
 	fs.BoolVar(&quiet, "q", false, "Suppress command-mode override summary output")
 	fs.BoolVar(&quiet, "quiet", false, "Suppress command-mode override summary output")
 	fs.BoolVar(&dryRun, "n", false, "Preview mode: print planned overrides and do not execute command")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview mode: print planned overrides and do not execute command")
+	fs.StringVar(&namespace, "namespace", "", "Namespace for deterministic seed")
+	fs.StringVar(&seed, "seed", "", "Explicit deterministic seed (uint32)")
+	fs.BoolVar(&useLock, "use-lock", false, "Use .autoport.lock.json assignments")
 	fs.Var(&ignores, "i", "Ignore environment variables starting with this prefix (can be used multiple times)")
 	fs.Var(&presets, "p", "Apply a preset (built-in or from .autoport.json)")
 	fs.Var(&portEnv, "k", "Include a port environment key manually (can be used multiple times)")
+	fs.Var(&includes, "include", "Include exact port key (can be used multiple times)")
+	fs.Var(&excludes, "exclude", "Exclude exact port key (can be used multiple times)")
 
 	if err := fs.Parse(args); err != nil {
 		return app.Options{}, nil, err
 	}
-	if format != "shell" && format != "json" {
-		return app.Options{}, nil, fmt.Errorf("invalid format %q, expected shell or json", format)
+
+	if err := validateFormat(targetMode, format); err != nil {
+		return app.Options{}, nil, err
+	}
+
+	var seedPtr *uint32
+	if seed != "" {
+		v, err := strconv.ParseUint(seed, 10, 32)
+		if err != nil {
+			return app.Options{}, nil, fmt.Errorf("invalid --seed %q: %w", seed, err)
+		}
+		tmp := uint32(v)
+		seedPtr = &tmp
 	}
 
 	cwd, err := os.Getwd()
@@ -130,14 +166,53 @@ func parseCLIArgs(args []string) (app.Options, []string, error) {
 	}
 
 	opts := app.Options{
-		Ignores: ignores,
-		Presets: presets,
-		PortEnv: portEnv,
-		Range:   *rangeFlag,
-		Format:  format,
-		Quiet:   quiet,
-		DryRun:  dryRun,
-		CWD:     cwd,
+		Mode:      targetMode,
+		Ignores:   ignores,
+		Includes:  includes,
+		Excludes:  excludes,
+		Presets:   presets,
+		PortEnv:   portEnv,
+		Range:     *rangeFlag,
+		Format:    format,
+		Quiet:     quiet,
+		DryRun:    dryRun,
+		CWD:       cwd,
+		Namespace: namespace,
+		Seed:      seedPtr,
+		UseLock:   useLock,
 	}
 	return opts, fs.Args(), nil
+}
+
+type ioDiscard struct{}
+
+func (ioDiscard) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+func defaultFormatForMode(mode string) string {
+	switch mode {
+	case "explain", "doctor":
+		return "text"
+	default:
+		return "shell"
+	}
+}
+
+func validateFormat(mode, format string) error {
+	allowed := map[string]bool{}
+	switch mode {
+	case "explain", "doctor":
+		allowed["text"] = true
+		allowed["json"] = true
+	default:
+		allowed["shell"] = true
+		allowed["json"] = true
+		allowed["dotenv"] = true
+		allowed["yaml"] = true
+	}
+	if !allowed[format] {
+		return fmt.Errorf("invalid format %q for mode %q", format, mode)
+	}
+	return nil
 }

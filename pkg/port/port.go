@@ -55,6 +55,9 @@ func ParseRange(spec string) (Range, error) {
 	if start > end {
 		return Range{}, fmt.Errorf("start port %d must be less than or equal to end port %d", start, end)
 	}
+	if start < 1 || end > 65535 {
+		return Range{}, fmt.Errorf("range %d-%d must be within 1-65535", start, end)
+	}
 	return Range{Start: start, End: end}, nil
 }
 
@@ -65,8 +68,16 @@ func HashPath(path string) uint32 {
 		path = abs
 	}
 	h := fnv.New32a()
-	h.Write([]byte(path))
+	_, _ = h.Write([]byte(path))
 	return h.Sum32()
+}
+
+// SeedFor derives the deterministic seed for path+namespace.
+func SeedFor(path, namespace string) uint32 {
+	if namespace == "" {
+		return HashPath(path)
+	}
+	return HashPath(path + "|" + namespace)
 }
 
 // Allocator finds deterministic available ports for a given seed and range.
@@ -78,22 +89,29 @@ type Allocator struct {
 
 // PortFor returns an available deterministic port for the given index.
 func (a Allocator) PortFor(index int) (int, error) {
+	p, _, _, err := a.PortForWithStats(index)
+	return p, err
+}
+
+// PortForWithStats returns allocated port plus preferred candidate and probe count.
+func (a Allocator) PortForWithStats(index int) (assigned int, preferred int, probes int, err error) {
 	isFree := a.IsFree
 	if isFree == nil {
 		isFree = DefaultIsFree
 	}
 	size := a.Range.Size()
 	if size <= 0 {
-		return 0, fmt.Errorf("invalid range size: %d", size)
+		return 0, 0, 0, fmt.Errorf("invalid range size: %d", size)
 	}
 
 	base := int(a.Seed) + index
+	preferred = a.Range.Start + base%size
 
 	for i := 0; i < size; i++ {
 		p := a.Range.Start + (base+i)%size
 		if isFree(p) {
-			return p, nil
+			return p, preferred, i, nil
 		}
 	}
-	return 0, fmt.Errorf("no free ports in range %d-%d", a.Range.Start, a.Range.End)
+	return 0, preferred, size, fmt.Errorf("no free ports in range %d-%d", a.Range.Start, a.Range.End)
 }

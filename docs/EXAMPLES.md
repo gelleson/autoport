@@ -6,53 +6,70 @@
 autoport npm start
 ```
 
-## Run Go service with deterministic ports
-
-```bash
-autoport go run ./cmd/api
-```
-
-## Export ports into current shell
+## Export into current shell
 
 ```bash
 eval "$(autoport)"
 ```
 
-Then run tools that read environment variables:
+## Use YAML for scripting
 
 ```bash
-docker compose up
+autoport -f yaml
 ```
 
-## Use a custom range
+## Explain why a key was or wasn't used
 
 ```bash
-autoport -r 7000-7099 npm run dev
+autoport explain
 ```
 
-## Ignore specific prefixes
-
-Ignore database variables while still managing app ports:
+JSON explain payload:
 
 ```bash
-autoport -i DB_ -i REDIS_ npm start
+autoport explain -f json
 ```
 
-## Use built-in database preset
+## Run diagnostics
 
 ```bash
-autoport -p db npm start
+autoport doctor
+```
+
+Machine-readable diagnostics:
+
+```bash
+autoport doctor -f json
+```
+
+## Use namespace for monorepo services
+
+```bash
+autoport --namespace api npm run dev
+autoport --namespace worker npm run dev
+```
+
+## Use explicit include/exclude policy
+
+```bash
+autoport --include PORT --include WEB_PORT --exclude DB_PORT npm start
+```
+
+## Generate and consume lockfile
+
+```bash
+autoport lock
+autoport --use-lock npm start
 ```
 
 ## Use custom preset from config
 
-`~/.autoport.json` or `./.autoport.json`:
-
 ```json
 {
+  "version": 2,
   "presets": {
     "web": {
-      "ignore": ["STRIPE_", "AWS_"],
+      "ignore_prefixes": ["AWS_", "STRIPE_"],
       "range": "8000-8099"
     }
   }
@@ -65,45 +82,13 @@ Run:
 autoport -p web npm run dev
 ```
 
-## Multiple services in one machine
-
-In each project directory, run your normal command through `autoport`:
+## CI usage with JSON
 
 ```bash
-# service-a
-cd ~/work/service-a
-autoport npm start
-
-# service-b
-cd ~/work/service-b
-autoport go run .
+autoport -f json go test ./...
 ```
 
-Each service gets deterministic ports based on its own directory path.
-
-## CI usage
-
-```bash
-autoport go test ./...
-```
-
-Useful when parallel jobs share a host and default ports might collide.
-
-## JSON output for scripting
-
-```bash
-autoport -f json
-```
-
-## Quiet command mode
-
-Suppress autoport's command summary and only print command output:
-
-```bash
-autoport -q npm start
-```
-
-## Preview command overrides without executing
+## Preview without executing command
 
 ```bash
 autoport -n npm start

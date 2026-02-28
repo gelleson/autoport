@@ -94,3 +94,43 @@ func TestScanner_ScanFiles_SkipsHiddenDirectories(t *testing.T) {
 		t.Errorf("Scanner.Scan() = %v, want %v", got, want)
 	}
 }
+
+func TestScanner_ScanDetailed_StatsAndSources(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tmpDir, "node_modules"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".env.local"), []byte("A_PORT=3000\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "node_modules", ".env"), []byte("B_PORT=3001\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(tmpDir,
+		WithEnviron([]string{"C_PORT=3333"}),
+		WithIgnoreDirs([]string{"node_modules"}),
+	)
+
+	discoveries, stats, err := s.ScanDetailed(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := map[string]string{}
+	for _, d := range discoveries {
+		found[d.Key] = d.Source
+	}
+	if found["A_PORT"] != ".env.local" {
+		t.Fatalf("A_PORT source = %q", found["A_PORT"])
+	}
+	if found["C_PORT"] != "env" {
+		t.Fatalf("C_PORT source = %q", found["C_PORT"])
+	}
+	if _, ok := found["B_PORT"]; ok {
+		t.Fatalf("B_PORT should be skipped via ignore dir")
+	}
+	if stats.SkippedIgnore == 0 {
+		t.Fatalf("expected ignored directories count")
+	}
+}

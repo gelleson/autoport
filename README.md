@@ -2,16 +2,19 @@
 
 `autoport` is a deterministic port wrapper for local development.
 
-It discovers `PORT` and `*_PORT` environment keys, assigns free ports based on your project path, and either:
-- runs your command with overrides, or
-- prints shell exports when no command is provided.
+It discovers `PORT` and `*_PORT` environment keys, assigns free ports based on your project path (and optional namespace), and can:
+- run your command with overrides,
+- print exports for your shell,
+- explain how assignments were produced,
+- diagnose configuration/environment issues,
+- and persist/consume lockfiles.
 
 ## Why use it
 
 - Prevents port collisions across multiple local projects
-- Keeps port assignment stable for the same project path
+- Keeps assignment stable for the same project path + namespace
 - Works with existing workflows (`npm`, `go run`, Docker, test commands)
-- Requires no database, daemon, or lock file
+- Supports opt-in reproducibility via lockfile
 
 ## Installation
 
@@ -23,16 +26,6 @@ Single-line installer (macOS/Linux):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gelleson/autoport/main/scripts/install.sh | sh
-```
-
-Install script options:
-
-```bash
-# Install a specific release tag
-curl -fsSL https://raw.githubusercontent.com/gelleson/autoport/main/scripts/install.sh | sh -s -- v1.0.0
-
-# Install to a custom directory
-INSTALL_DIR="$HOME/.local/bin" curl -fsSL https://raw.githubusercontent.com/gelleson/autoport/main/scripts/install.sh | sh
 ```
 
 Windows (PowerShell):
@@ -55,56 +48,112 @@ Export ports into your current shell:
 eval "$(autoport)"
 ```
 
-Use a custom range:
+Explain key discovery and allocation:
 
 ```bash
-autoport -r 8000-8999 npm start
+autoport explain
 ```
 
-Apply a preset and ignore prefixes:
+Run health checks:
 
 ```bash
-autoport -p db -i REDIS_ npm start
+autoport doctor
+```
+
+Create and consume lockfile:
+
+```bash
+autoport lock
+autoport --use-lock npm start
 ```
 
 ## CLI
 
 ```text
 autoport [flags] [command ...]
+autoport explain [flags]
+autoport doctor [flags]
+autoport lock [flags]
+autoport version
 ```
 
-Special command:
-- `autoport version`: print embedded build version and build time
-
-Flags:
+Selection flags:
 - `-r <start-end>`: Port range (default: `10000-20000`)
 - `-p <name>`: Preset name (repeatable)
 - `-i <prefix>`: Ignore env keys starting with prefix (repeatable)
-- `-k <env_key>`: Include a port env key manually (repeatable), e.g. `WEB_PORT`
-- `-f, -format <shell|json>`: Output format (default: `shell`)
-- `-q, -quiet`: Suppress command-mode override summaries
-- `-n, -dry-run`: Preview resolved overrides without executing the command
+- `--include <env_key>`: Include exact key (repeatable)
+- `--exclude <env_key>`: Exclude exact key (repeatable)
+- `-k <env_key>`: Include a port env key manually (repeatable)
 
-Behavior:
-- With `command`: executes command with port overrides in process env and prints a summary to `stderr`
-- Without `command`: prints `export KEY=value` lines sorted by key
-- With `-f json`: emits structured JSON instead of shell exports/table summaries
-- With `-n`: prints preview output and exits `0` without running the command
+Execution flags:
+- `-q, -quiet`: Suppress command-mode override summary
+- `-n, -dry-run`: Preview overrides without executing
+- `--namespace <name>`: Namespace salt for deterministic seed
+- `--seed <uint32>`: Explicit deterministic seed
+- `--use-lock`: Use `.autoport.lock.json` assignments (opt-in)
+
+Formats:
+- Run/export mode (`autoport`): `-f shell|json|dotenv|yaml` (default: `shell`)
+- Explain/doctor modes: `-f text|json` (default: `text`)
+
+## Commands
+
+### `autoport` (run/export)
+- With `command`: executes command with port overrides in process env
+- Without `command`: prints exports in selected format
+- With `-n`: prints preview and exits without running command
+
+### `autoport explain`
+Shows:
+- effective inputs (range/presets/filters/seed),
+- discovered keys and source (`env`, `.env`, `.env.local`, `default`, `manual`),
+- inclusion/exclusion decisions,
+- final assignments (`preferred`, `assigned`, `probes`).
+
+### `autoport doctor`
+Runs diagnostics for:
+- config parse/compat,
+- unknown preset behavior,
+- range sanity,
+- scan stats,
+- sampled port availability,
+- lockfile compatibility.
+
+Exit codes:
+- `0` healthy
+- `1` warnings only
+- `2` fatal issues
+
+### `autoport lock`
+Writes `.autoport.lock.json` with:
+- `version`
+- `cwd_fingerprint`
+- `range`
+- `assignments`
+- `created_at`
 
 ## Configuration
 
 `autoport` loads presets from:
 1. `~/.autoport.json`
-2. `./.autoport.json` (overrides same preset names from home config)
+2. `./.autoport.json` (overrides home config)
 
-Example:
+### v2 schema
 
 ```json
 {
+  "version": 2,
+  "strict": false,
+  "scanner": {
+    "ignore_dirs": ["node_modules", "vendor"],
+    "max_depth": 4
+  },
   "presets": {
     "web": {
-      "ignore": ["STRIPE_", "AWS_"],
-      "range": "8000-9000"
+      "range": "8000-9000",
+      "ignore_prefixes": ["AWS_", "STRIPE_"],
+      "include_keys": ["PORT", "WEB_PORT"],
+      "exclude_keys": ["DB_PORT"]
     }
   }
 }
@@ -113,38 +162,33 @@ Example:
 Built-in presets:
 - `db`: ignores database-style prefixes (`DB`, `DATABASE`, `POSTGRES`, `MYSQL`, `MONGO`, `REDIS`, `MEMCACHED`, `ES`, `CLICKHOUSE`, `INFLUX`)
 
-## How it works
+### Migration compatibility
 
-1. Hashes absolute current working directory path (FNV-1a, 32-bit)
-2. Discovers target keys from current env and `.env` / `.env.*` files
-3. Computes deterministic candidate per key index inside selected range
-4. Probes forward until a free port is found
-5. Exports or executes with overrides
+Legacy v1 preset field `ignore` is still accepted in this release and auto-mapped to `ignore_prefixes` with warnings.
+See [Migration Guide](docs/MIGRATION_V1.md).
 
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Examples](docs/EXAMPLES.md)
+- [Migration Guide](docs/MIGRATION_V1.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## CI/CD
 
-- CI runs on every pull request and on pushes to `main`:
+- CI runs on pull requests and pushes to `main`:
   - `gofmt` check
   - `go vet ./...`
   - `go test ./...`
   - `go test -tags e2e ./e2e -v`
   - `go build ./...`
-- CD runs on tags matching `v*` (for example `v1.0.0`) and creates a GitHub Release with binaries for:
-  - Linux (`amd64`, `arm64`)
-  - macOS (`amd64`, `arm64`)
-  - Windows (`amd64`)
+- CD runs on tags matching `v*` and publishes binaries for Linux/macOS/Windows.
 
 ## Project Layout
 
-- `main.go`: CLI entrypoint and arg parsing
-- `internal/app`: workflow orchestration
-- `internal/scanner`: key discovery from env and files
-- `internal/config`: preset loading/merging
-- `internal/env`: `.env` key extraction
-- `pkg/port`: range parsing, hashing, deterministic allocation
+- `main.go`: CLI parsing and process exit behavior
+- `internal/app`: orchestration for run/explain/doctor/lock
+- `internal/scanner`: key discovery + scan stats + source tracking
+- `internal/config`: v2 config loading, merging, migration warnings
+- `internal/lockfile`: lockfile read/write/fingerprint
+- `pkg/port`: range parsing, seed derivation, deterministic allocation

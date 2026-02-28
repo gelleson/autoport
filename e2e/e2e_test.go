@@ -3,9 +3,11 @@
 package e2e_test
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -84,5 +86,141 @@ func TestE2E_ManualInvalidPortKeyFails(t *testing.T) {
 	}
 	if !strings.Contains(string(output), `invalid env key "BAD-KEY"`) {
 		t.Fatalf("expected invalid key error, got:\n%s", string(output))
+	}
+}
+
+func TestE2E_PortRangeFlag(t *testing.T) {
+	binPath := buildAutoportBinary(t)
+	projectDir := t.TempDir()
+
+	cmd := exec.Command(binPath, "-r", "3000-3005", "-k", "CUSTOM_PORT", "sh", "-c", "echo $CUSTOM_PORT")
+	cmd.Dir = projectDir
+	stdout, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("run autoport with range: %v", err)
+	}
+
+	portStr := strings.TrimSpace(string(stdout))
+	portNum, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("expected numeric CUSTOM_PORT, got %q", portStr)
+	}
+
+	if portNum < 3000 || portNum > 3005 {
+		t.Fatalf("expected CUSTOM_PORT between 3000 and 3005, got %d", portNum)
+	}
+}
+
+func TestE2E_IgnoreFlag(t *testing.T) {
+	binPath := buildAutoportBinary(t)
+	projectDir := t.TempDir()
+
+	// Create a .env file
+	envContent := "FOO_PORT=8080\nBAR_PORT=9090\n"
+	err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte(envContent), 0644)
+	if err != nil {
+		t.Fatalf("create .env: %v", err)
+	}
+
+	// Run without flags, should see both FOO_PORT and BAR_PORT
+	cmd := exec.Command(binPath)
+	cmd.Dir = projectDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run autoport: %v\n%s", err, string(output))
+	}
+	outStr := string(output)
+	if !strings.Contains(outStr, "export FOO_PORT=") {
+		t.Fatalf("expected FOO_PORT in output, got:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "export BAR_PORT=") {
+		t.Fatalf("expected BAR_PORT in output, got:\n%s", outStr)
+	}
+
+	// Run with -i FOO_, should see BAR_PORT but NOT FOO_PORT
+	cmd = exec.Command(binPath, "-i", "FOO_")
+	cmd.Dir = projectDir
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run autoport with ignore: %v\n%s", err, string(output))
+	}
+	outStr = string(output)
+	if strings.Contains(outStr, "export FOO_PORT=") {
+		t.Fatalf("expected FOO_PORT to be ignored, but found in output:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "export BAR_PORT=") {
+		t.Fatalf("expected BAR_PORT in output, got:\n%s", outStr)
+	}
+}
+
+func TestE2E_PresetFlag(t *testing.T) {
+	binPath := buildAutoportBinary(t)
+	projectDir := t.TempDir()
+
+	// Create a .env file with DB ports
+	envContent := "REDIS_PORT=6379\nMONGO_PORT=27017\nOTHER_PORT=1234\n"
+	err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte(envContent), 0644)
+	if err != nil {
+		t.Fatalf("create .env: %v", err)
+	}
+
+	// Run with the built-in "db" preset, which ignores REDIS and MONGO
+	cmd := exec.Command(binPath, "-p", "db")
+	cmd.Dir = projectDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run autoport with preset: %v\n%s", err, string(output))
+	}
+	outStr := string(output)
+
+	if strings.Contains(outStr, "export REDIS_PORT=") {
+		t.Fatalf("expected REDIS_PORT to be ignored by 'db' preset, found in:\n%s", outStr)
+	}
+	if strings.Contains(outStr, "export MONGO_PORT=") {
+		t.Fatalf("expected MONGO_PORT to be ignored by 'db' preset, found in:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "export OTHER_PORT=") {
+		t.Fatalf("expected OTHER_PORT to be included, found in:\n%s", outStr)
+	}
+}
+
+func TestE2E_ConfigPreset(t *testing.T) {
+	binPath := buildAutoportBinary(t)
+	projectDir := t.TempDir()
+
+	// Create .env file
+	envContent := "MY_PORT=1234\nYOUR_PORT=5678\n"
+	err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte(envContent), 0644)
+	if err != nil {
+		t.Fatalf("create .env: %v", err)
+	}
+
+	// Create .autoport.json
+	configContent := `{
+		"presets": {
+			"custom": {
+				"ignore": ["MY_"]
+			}
+		}
+	}`
+	err = os.WriteFile(filepath.Join(projectDir, ".autoport.json"), []byte(configContent), 0644)
+	if err != nil {
+		t.Fatalf("create .autoport.json: %v", err)
+	}
+
+	// Run with custom preset
+	cmd := exec.Command(binPath, "-p", "custom")
+	cmd.Dir = projectDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run autoport with custom preset: %v\n%s", err, string(output))
+	}
+	outStr := string(output)
+
+	if strings.Contains(outStr, "export MY_PORT=") {
+		t.Fatalf("expected MY_PORT to be ignored by 'custom' preset, found in:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "export YOUR_PORT=") {
+		t.Fatalf("expected YOUR_PORT to be included, found in:\n%s", outStr)
 	}
 }

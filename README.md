@@ -73,6 +73,9 @@ autoport -p db -i REDIS_ npm start
 autoport [flags] [command ...]
 ```
 
+Special command:
+- `autoport version`: print embedded build version and build time
+
 Flags:
 - `-r <start-end>`: Port range (default: `10000-20000`)
 - `-p <name>`: Preset name (repeatable)

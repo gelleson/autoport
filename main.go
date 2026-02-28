@@ -19,6 +19,11 @@ import (
 	"github.com/gelleson/autoport/internal/app"
 )
 
+var (
+	version   = "dev"
+	buildTime = "unknown"
+)
+
 // ignoreFlags is a custom flag type to collect multiple ignore prefixes.
 type ignoreFlags []string
 
@@ -75,9 +80,21 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if isVersionCommand(cmdArgs) {
+		fmt.Fprintln(os.Stdout, versionString())
+		return nil
+	}
 
 	application := app.New()
 	return application.Run(ctx, opts, cmdArgs)
+}
+
+func isVersionCommand(args []string) bool {
+	return len(args) == 1 && args[0] == "version"
+}
+
+func versionString() string {
+	return fmt.Sprintf("%s (built %s)", version, buildTime)
 }
 
 func parseCLIArgs(args []string) (app.Options, []string, error) {

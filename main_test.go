@@ -63,3 +63,42 @@ func TestParseCLIArgs_InvalidFormat(t *testing.T) {
 		t.Fatal("parseCLIArgs() expected error for invalid format")
 	}
 }
+
+func TestIsVersionCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "version subcommand", args: []string{"version"}, want: true},
+		{name: "version with extra args", args: []string{"version", "extra"}, want: false},
+		{name: "no args", args: nil, want: false},
+		{name: "command mode", args: []string{"npm", "start"}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isVersionCommand(tt.args); got != tt.want {
+				t.Fatalf("isVersionCommand(%v) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVersionString(t *testing.T) {
+	prevVersion := version
+	prevBuildTime := buildTime
+	t.Cleanup(func() {
+		version = prevVersion
+		buildTime = prevBuildTime
+	})
+
+	version = "v1.2.3"
+	buildTime = "2026-02-28T16:00:00Z"
+
+	got := versionString()
+	want := "v1.2.3 (built 2026-02-28T16:00:00Z)"
+	if got != want {
+		t.Fatalf("versionString() = %q, want %q", got, want)
+	}
+}

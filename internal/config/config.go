@@ -40,6 +40,21 @@ var BuiltInPresets = map[string]Preset{
 	"db": {
 		IgnorePrefixes: []string{"DB", "DATABASE", "POSTGRES", "MYSQL", "MONGO", "REDIS", "MEMCACHED", "ES", "CLICKHOUSE", "INFLUX"},
 	},
+	"queues": {
+		ExcludeKeys: []string{
+			"RABBITMQ_PORT",
+			"AMQP_PORT",
+			"NATS_PORT",
+			"KAFKA_PORT",
+			"PULSAR_PORT",
+			"ACTIVEMQ_PORT",
+			"ARTEMIS_PORT",
+			"SQS_PORT",
+			"NSQ_PORT",
+			"RSMQ_PORT",
+			"BEANSTALKD_PORT",
+		},
+	},
 }
 
 // Load reads configuration from the provided file paths, merging them in order.

@@ -161,6 +161,7 @@ Writes `.autoport.lock.json` with:
 
 Built-in presets:
 - `db`: ignores database-style prefixes (`DB`, `DATABASE`, `POSTGRES`, `MYSQL`, `MONGO`, `REDIS`, `MEMCACHED`, `ES`, `CLICKHOUSE`, `INFLUX`)
+- `queues`: excludes common broker ports (`RABBITMQ_PORT`, `AMQP_PORT`, `NATS_PORT`, `KAFKA_PORT`, `PULSAR_PORT`, `ACTIVEMQ_PORT`, `ARTEMIS_PORT`, `SQS_PORT`, `NSQ_PORT`, `RSMQ_PORT`, `BEANSTALKD_PORT`)
 
 ### Migration compatibility
 

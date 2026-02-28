@@ -205,6 +205,40 @@ func TestE2E_PresetFlag(t *testing.T) {
 	}
 }
 
+func TestE2E_QueuesPresetExcludesCommonQueuePorts(t *testing.T) {
+	requireTCPBindCapability(t)
+
+	binPath := buildAutoportBinary(t)
+	projectDir := t.TempDir()
+
+	envContent := "RABBITMQ_PORT=5672\nNATS_PORT=4222\nKAFKA_PORT=9092\nWORKER_PORT=3002\n"
+	err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte(envContent), 0644)
+	if err != nil {
+		t.Fatalf("create .env: %v", err)
+	}
+
+	cmd := exec.Command(binPath, "-p", "queues")
+	cmd.Dir = projectDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run autoport with queues preset: %v\n%s", err, string(output))
+	}
+	outStr := string(output)
+
+	if strings.Contains(outStr, "export RABBITMQ_PORT=") {
+		t.Fatalf("expected RABBITMQ_PORT to be excluded by 'queues' preset, found in:\n%s", outStr)
+	}
+	if strings.Contains(outStr, "export NATS_PORT=") {
+		t.Fatalf("expected NATS_PORT to be excluded by 'queues' preset, found in:\n%s", outStr)
+	}
+	if strings.Contains(outStr, "export KAFKA_PORT=") {
+		t.Fatalf("expected KAFKA_PORT to be excluded by 'queues' preset, found in:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "export WORKER_PORT=") {
+		t.Fatalf("expected WORKER_PORT to be included, found in:\n%s", outStr)
+	}
+}
+
 func TestE2E_ConfigPreset(t *testing.T) {
 	requireTCPBindCapability(t)
 

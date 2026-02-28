@@ -37,6 +37,29 @@ func requireTCPBindCapability(t *testing.T) {
 	_ = ln.Close()
 }
 
+func initGitRepoWithBranch(t *testing.T, dir, branch string) {
+	t.Helper()
+
+	cmd := exec.Command("git", "init", "-b", branch)
+	cmd.Dir = dir
+	if output, err := cmd.CombinedOutput(); err == nil {
+		_ = output
+		return
+	}
+
+	// Fallback for older git versions that do not support init -b.
+	cmd = exec.Command("git", "init")
+	cmd.Dir = dir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, string(output))
+	}
+	cmd = exec.Command("git", "symbolic-ref", "HEAD", "refs/heads/"+branch)
+	cmd.Dir = dir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git symbolic-ref failed: %v\n%s", err, string(output))
+	}
+}
+
 func TestE2E_ExportsPortWhenNoEnvFound(t *testing.T) {
 	requireTCPBindCapability(t)
 
@@ -507,5 +530,139 @@ func TestE2E_ScannerIgnoreDirsAndMaxDepth(t *testing.T) {
 	}
 	if !strings.Contains(out, "export VISIBLE_PORT=") {
 		t.Fatalf("VISIBLE_PORT missing: %s", out)
+	}
+}
+
+func TestE2E_TargetEnvSmartRewriteSameBranch(t *testing.T) {
+	requireTCPBindCapability(t)
+
+	binPath := buildAutoportBinary(t)
+	root := t.TempDir()
+	serviceA := filepath.Join(root, "service-a")
+	serviceB := filepath.Join(root, "service-b")
+	if err := os.MkdirAll(serviceA, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(serviceB, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(serviceA, ".env"), []byte("monitoring_url=http://localhost:31413/rpc\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	targetEnv := filepath.Join(serviceB, ".env")
+	if err := os.WriteFile(targetEnv, []byte("app_port=31413\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithBranch(t, serviceA, "feature-link")
+	initGitRepoWithBranch(t, serviceB, "feature-link")
+
+	targetCmd := exec.Command(binPath, "--seed-branch", "-q", "sh", "-c", "echo $app_port")
+	targetCmd.Dir = serviceB
+	targetOut, err := targetCmd.Output()
+	if err != nil {
+		t.Fatalf("service-b run: %v", err)
+	}
+	targetPort := strings.TrimSpace(string(targetOut))
+	if !regexp.MustCompile(`^\d+$`).MatchString(targetPort) {
+		t.Fatalf("expected numeric target app_port, got %q", targetPort)
+	}
+
+	sourceCmd := exec.Command(binPath, "--seed-branch", "-q", "-e", targetEnv, "sh", "-c", "echo $monitoring_url")
+	sourceCmd.Dir = serviceA
+	sourceCmd.Env = append(os.Environ(), "monitoring_url=http://localhost:31413/rpc")
+	sourceOut, err := sourceCmd.Output()
+	if err != nil {
+		t.Fatalf("service-a run: %v", err)
+	}
+	got := strings.TrimSpace(string(sourceOut))
+	want := "http://localhost:" + targetPort + "/rpc"
+	if got != want {
+		t.Fatalf("rewritten monitoring_url = %q, want %q", got, want)
+	}
+}
+
+func TestE2E_TargetEnvExplicitRewriteSameBranch(t *testing.T) {
+	requireTCPBindCapability(t)
+
+	binPath := buildAutoportBinary(t)
+	root := t.TempDir()
+	serviceA := filepath.Join(root, "service-a")
+	serviceB := filepath.Join(root, "service-b")
+	if err := os.MkdirAll(serviceA, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(serviceB, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(serviceA, ".env"), []byte("monitoring_url=http://localhost:31413/rpc\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	targetEnv := filepath.Join(serviceB, ".env")
+	if err := os.WriteFile(targetEnv, []byte("app_port=31413\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithBranch(t, serviceA, "feature-link")
+	initGitRepoWithBranch(t, serviceB, "feature-link")
+
+	targetCmd := exec.Command(binPath, "--seed-branch", "-q", "sh", "-c", "echo $app_port")
+	targetCmd.Dir = serviceB
+	targetOut, err := targetCmd.Output()
+	if err != nil {
+		t.Fatalf("service-b run: %v", err)
+	}
+	targetPort := strings.TrimSpace(string(targetOut))
+
+	spec := "monitoring_url=" + targetEnv + ":app_port"
+	sourceCmd := exec.Command(binPath, "--seed-branch", "-q", "-e", spec, "sh", "-c", "echo $monitoring_url")
+	sourceCmd.Dir = serviceA
+	sourceCmd.Env = append(os.Environ(), "monitoring_url=http://localhost:31413/rpc")
+	sourceOut, err := sourceCmd.Output()
+	if err != nil {
+		t.Fatalf("service-a run: %v", err)
+	}
+	got := strings.TrimSpace(string(sourceOut))
+	want := "http://localhost:" + targetPort + "/rpc"
+	if got != want {
+		t.Fatalf("rewritten monitoring_url = %q, want %q", got, want)
+	}
+}
+
+func TestE2E_TargetEnvBranchMismatchSkipsRewrite(t *testing.T) {
+	requireTCPBindCapability(t)
+
+	binPath := buildAutoportBinary(t)
+	root := t.TempDir()
+	serviceA := filepath.Join(root, "service-a")
+	serviceB := filepath.Join(root, "service-b")
+	if err := os.MkdirAll(serviceA, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(serviceB, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(serviceA, ".env"), []byte("monitoring_url=http://localhost:31413/rpc\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	targetEnv := filepath.Join(serviceB, ".env")
+	if err := os.WriteFile(targetEnv, []byte("app_port=31413\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithBranch(t, serviceA, "feature-a")
+	initGitRepoWithBranch(t, serviceB, "feature-b")
+
+	cmd := exec.Command(binPath, "--seed-branch", "-q", "-e", targetEnv, "sh", "-c", "echo $monitoring_url")
+	cmd.Dir = serviceA
+	cmd.Env = append(os.Environ(), "monitoring_url=http://localhost:31413/rpc")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("service-a run failed: %v\n%s", err, string(output))
+	}
+
+	outStr := string(output)
+	if !strings.Contains(outStr, "http://localhost:31413/rpc") {
+		t.Fatalf("expected original monitoring_url, got:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "branch mismatch") {
+		t.Fatalf("expected branch mismatch warning, got:\n%s", outStr)
 	}
 }

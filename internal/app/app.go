@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/gelleson/autoport/internal/config"
+	"github.com/gelleson/autoport/internal/gitbranch"
+	"github.com/gelleson/autoport/internal/linkspec"
 	"github.com/gelleson/autoport/internal/lockfile"
 	"github.com/gelleson/autoport/internal/scanner"
 	"github.com/gelleson/autoport/pkg/port"
@@ -23,20 +25,23 @@ import (
 
 // Options represents the input options for the application.
 type Options struct {
-	Mode      string
-	Ignores   []string
-	Includes  []string
-	Excludes  []string
-	Presets   []string
-	PortEnv   []string
-	Range     string
-	Format    string
-	Quiet     bool
-	DryRun    bool
-	CWD       string
-	Namespace string
-	Seed      *uint32
-	UseLock   bool
+	Mode           string
+	Ignores        []string
+	Includes       []string
+	Excludes       []string
+	Presets        []string
+	PortEnv        []string
+	Range          string
+	Format         string
+	Quiet          bool
+	DryRun         bool
+	CWD            string
+	Namespace      string
+	Seed           *uint32
+	Branch         string
+	SeedBranch     bool
+	TargetEnvSpecs []string
+	UseLock        bool
 }
 
 // ExitError allows command modes to signal specific process exit codes.
@@ -77,13 +82,14 @@ func (d DefaultExecutor) Run(ctx context.Context, name string, args []string, en
 
 // App encapsulates the main application logic and its dependencies.
 type App struct {
-	config   *config.Config
-	executor Executor
-	stdout   io.Writer
-	stderr   io.Writer
-	logger   *slog.Logger
-	environ  []string
-	isFree   port.IsFreeFunc
+	config        *config.Config
+	executor      Executor
+	stdout        io.Writer
+	stderr        io.Writer
+	logger        *slog.Logger
+	environ       []string
+	isFree        port.IsFreeFunc
+	resolveBranch func(repoDir string) (string, error)
 }
 
 // AppOption defines a functional option for configuring the App.
@@ -124,16 +130,22 @@ func WithIsFree(fn port.IsFreeFunc) AppOption {
 	return func(a *App) { a.isFree = fn }
 }
 
+// WithBranchResolver sets a custom branch resolver.
+func WithBranchResolver(fn func(repoDir string) (string, error)) AppOption {
+	return func(a *App) { a.resolveBranch = fn }
+}
+
 // New creates a new App with default dependencies and optional overrides.
 func New(opts ...AppOption) *App {
 	a := &App{
-		config:   config.LoadDefault(),
-		executor: DefaultExecutor{},
-		stdout:   os.Stdout,
-		stderr:   os.Stderr,
-		logger:   slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
-		environ:  os.Environ(),
-		isFree:   port.DefaultIsFree,
+		config:        config.LoadDefault(),
+		executor:      DefaultExecutor{},
+		stdout:        os.Stdout,
+		stderr:        os.Stderr,
+		logger:        slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		environ:       os.Environ(),
+		isFree:        port.DefaultIsFree,
+		resolveBranch: gitbranch.Current,
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -148,6 +160,7 @@ type resolvedOptions struct {
 	Excludes   []string
 	IgnoreDirs []string
 	MaxDepth   int
+	Links      []config.LinkRule
 	Warnings   []string
 	Strict     bool
 }
@@ -168,6 +181,21 @@ type assignedPort struct {
 	FromLock  bool
 }
 
+type linkRewrite struct {
+	SourceKey  string
+	OldValue   string
+	NewValue   string
+	TargetRepo string
+	TargetKey  string
+	PortSource string
+}
+
+// ValidateTargetEnvSpecs validates -e/--target-env values.
+func ValidateTargetEnvSpecs(values []string) error {
+	_, err := linkspec.ParseMany(values)
+	return err
+}
+
 // Run executes the main application workflow.
 func (a *App) Run(ctx context.Context, opts Options, args []string) error {
 	if opts.Mode == "" {
@@ -184,6 +212,10 @@ func (a *App) Run(ctx context.Context, opts Options, args []string) error {
 	if err != nil {
 		return err
 	}
+	targetSpecs, err := linkspec.ParseMany(opts.TargetEnvSpecs)
+	if err != nil {
+		return err
+	}
 
 	if opts.Mode == "doctor" {
 		return a.runDoctor(ctx, opts, res)
@@ -194,7 +226,7 @@ func (a *App) Run(ctx context.Context, opts Options, args []string) error {
 		return fmt.Errorf("range: %w", err)
 	}
 
-	seed := a.computeSeed(opts)
+	seed, effectiveBranch, seedWarnings := a.computeSeed(opts)
 	discoveries, scanStats, scanErr := a.scanDiscoveries(ctx, opts.CWD, res)
 	if scanErr != nil {
 		return fmt.Errorf("scan: %w", scanErr)
@@ -210,11 +242,17 @@ func (a *App) Run(ctx context.Context, opts Options, args []string) error {
 		return err
 	}
 	warnings := append([]string{}, res.Warnings...)
+	warnings = append(warnings, seedWarnings...)
 	warnings = append(warnings, assignWarnings...)
+	linkRewrites, linkWarnings, err := a.applyLinkRewrites(ctx, opts, res, r, targetSpecs, overrides)
+	if err != nil {
+		return err
+	}
+	warnings = append(warnings, linkWarnings...)
 
 	switch opts.Mode {
 	case "explain":
-		return a.renderExplain(opts, args, res, r, seed, decisions, assignments, warnings, scanStats)
+		return a.renderExplain(opts, args, res, r, seed, effectiveBranch, decisions, assignments, linkRewrites, warnings, scanStats)
 	case "lock":
 		return a.writeLockfile(opts, res.Range, overrides)
 	case "run":
@@ -230,6 +268,7 @@ func (a *App) resolveOptions(opts Options) (resolvedOptions, error) {
 		Ignores:  append([]string{}, opts.Ignores...),
 		Includes: append([]string{}, opts.Includes...),
 		Excludes: append([]string{}, opts.Excludes...),
+		Links:    append([]config.LinkRule{}, a.config.Links...),
 		Strict:   a.config.Strict,
 		Warnings: append([]string{}, a.config.Warnings...),
 	}
@@ -283,11 +322,27 @@ func (a *App) lookupPreset(name string) (config.Preset, bool) {
 	return preset, ok
 }
 
-func (a *App) computeSeed(opts Options) uint32 {
+func (a *App) computeSeed(opts Options) (uint32, string, []string) {
 	if opts.Seed != nil {
-		return *opts.Seed
+		return *opts.Seed, "", nil
 	}
-	return port.SeedFor(opts.CWD, opts.Namespace)
+	namespace := opts.Namespace
+	if !opts.SeedBranch {
+		return port.SeedFor(opts.CWD, namespace), "", nil
+	}
+	branch := strings.TrimSpace(opts.Branch)
+	if branch == "" {
+		if a.resolveBranch == nil {
+			return port.SeedFor(opts.CWD, namespace), "", []string{"seed-branch enabled but branch resolver is unavailable; falling back to non-branch seed"}
+		}
+		resolved, err := a.resolveBranch(opts.CWD)
+		if err != nil {
+			return port.SeedFor(opts.CWD, namespace), "", []string{fmt.Sprintf("seed-branch enabled but branch resolution failed for %s: %v; falling back to non-branch seed", opts.CWD, err)}
+		}
+		branch = resolved
+	}
+	namespace = appendBranchNamespace(namespace, branch)
+	return port.SeedFor(opts.CWD, namespace), branch, nil
 }
 
 func (a *App) scanDiscoveries(ctx context.Context, cwd string, res resolvedOptions) ([]scanner.Discovery, scanner.Stats, error) {
@@ -420,6 +475,7 @@ func (a *App) runOrExport(ctx context.Context, opts Options, args []string, rang
 			mode = "preview"
 		}
 		a.printPrimaryOutput(opts.Format, mode, opts.CWD, rangeSpec, nil, overrides, warnings)
+		a.printWarnings(warnings)
 		return nil
 	}
 
@@ -427,6 +483,7 @@ func (a *App) runOrExport(ctx context.Context, opts Options, args []string, rang
 		if opts.Format == "json" {
 			a.printJSONOutput(a.stdout, "preview", opts.CWD, rangeSpec, args, overrides, warnings)
 		} else {
+			a.printWarnings(warnings)
 			a.printOverrideSummary(args[0], args[1:], overrides)
 		}
 		return nil
@@ -435,6 +492,7 @@ func (a *App) runOrExport(ctx context.Context, opts Options, args []string, rang
 	env := a.buildExecEnv(overrides)
 	cmdName := args[0]
 	cmdArgs := args[1:]
+	a.printWarnings(warnings)
 	if !opts.Quiet {
 		if opts.Format == "json" {
 			a.printJSONOutput(a.stderr, "execute", opts.CWD, rangeSpec, args, overrides, warnings)
@@ -445,17 +503,25 @@ func (a *App) runOrExport(ctx context.Context, opts Options, args []string, rang
 	return a.executor.Run(ctx, cmdName, cmdArgs, env, a.stdout, a.stderr)
 }
 
+func (a *App) printWarnings(warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintf(a.stderr, "warning: %s\n", w)
+	}
+}
+
 type explainRange struct {
 	Start int `json:"start"`
 	End   int `json:"end"`
 }
 
 type explainInputs struct {
-	Presets   []string `json:"presets"`
-	Ignores   []string `json:"ignores"`
-	Includes  []string `json:"includes"`
-	Excludes  []string `json:"excludes"`
-	Namespace string   `json:"namespace,omitempty"`
+	Presets    []string `json:"presets"`
+	Ignores    []string `json:"ignores"`
+	Includes   []string `json:"includes"`
+	Excludes   []string `json:"excludes"`
+	Namespace  string   `json:"namespace,omitempty"`
+	SeedBranch bool     `json:"seed_branch,omitempty"`
+	Branch     string   `json:"branch,omitempty"`
 }
 
 type explainKey struct {
@@ -472,19 +538,29 @@ type explainAssignment struct {
 	Probes    int    `json:"probes"`
 }
 
-type explainPayload struct {
-	Mode        string              `json:"mode"`
-	CWD         string              `json:"cwd"`
-	Seed        uint32              `json:"seed"`
-	Range       explainRange        `json:"range"`
-	Inputs      explainInputs       `json:"inputs"`
-	Keys        []explainKey        `json:"keys"`
-	Assignments []explainAssignment `json:"assignments"`
-	Warnings    []string            `json:"warnings,omitempty"`
-	Stats       scanner.Stats       `json:"stats"`
+type explainLinkRewrite struct {
+	SourceKey  string `json:"source_key"`
+	OldValue   string `json:"old_value"`
+	NewValue   string `json:"new_value"`
+	TargetRepo string `json:"target_repo"`
+	TargetKey  string `json:"target_key"`
+	PortSource string `json:"port_source"`
 }
 
-func (a *App) renderExplain(opts Options, args []string, res resolvedOptions, r port.Range, seed uint32, decisions []keyDecision, assignments []assignedPort, warnings []string, stats scanner.Stats) error {
+type explainPayload struct {
+	Mode         string               `json:"mode"`
+	CWD          string               `json:"cwd"`
+	Seed         uint32               `json:"seed"`
+	Range        explainRange         `json:"range"`
+	Inputs       explainInputs        `json:"inputs"`
+	Keys         []explainKey         `json:"keys"`
+	Assignments  []explainAssignment  `json:"assignments"`
+	LinkRewrites []explainLinkRewrite `json:"link_rewrites,omitempty"`
+	Warnings     []string             `json:"warnings,omitempty"`
+	Stats        scanner.Stats        `json:"stats"`
+}
+
+func (a *App) renderExplain(opts Options, args []string, res resolvedOptions, r port.Range, seed uint32, branch string, decisions []keyDecision, assignments []assignedPort, rewrites []linkRewrite, warnings []string, stats scanner.Stats) error {
 	if opts.Format == "json" {
 		payload := explainPayload{
 			Mode:  "explain",
@@ -492,11 +568,13 @@ func (a *App) renderExplain(opts Options, args []string, res resolvedOptions, r 
 			Seed:  seed,
 			Range: explainRange{Start: r.Start, End: r.End},
 			Inputs: explainInputs{
-				Presets:   append([]string{}, opts.Presets...),
-				Ignores:   append([]string{}, res.Ignores...),
-				Includes:  append([]string{}, res.Includes...),
-				Excludes:  append([]string{}, res.Excludes...),
-				Namespace: opts.Namespace,
+				Presets:    append([]string{}, opts.Presets...),
+				Ignores:    append([]string{}, res.Ignores...),
+				Includes:   append([]string{}, res.Includes...),
+				Excludes:   append([]string{}, res.Excludes...),
+				Namespace:  opts.Namespace,
+				SeedBranch: opts.SeedBranch,
+				Branch:     branch,
 			},
 			Warnings: append([]string{}, warnings...),
 			Stats:    stats,
@@ -506,6 +584,16 @@ func (a *App) renderExplain(opts Options, args []string, res resolvedOptions, r 
 		}
 		for _, as := range assignments {
 			payload.Assignments = append(payload.Assignments, explainAssignment{Key: as.Key, Preferred: as.Preferred, Assigned: as.Assigned, Probes: as.Probes})
+		}
+		for _, rw := range rewrites {
+			payload.LinkRewrites = append(payload.LinkRewrites, explainLinkRewrite{
+				SourceKey:  rw.SourceKey,
+				OldValue:   rw.OldValue,
+				NewValue:   rw.NewValue,
+				TargetRepo: rw.TargetRepo,
+				TargetKey:  rw.TargetKey,
+				PortSource: rw.PortSource,
+			})
 		}
 		enc := json.NewEncoder(a.stdout)
 		return enc.Encode(payload)
@@ -519,6 +607,8 @@ func (a *App) renderExplain(opts Options, args []string, res resolvedOptions, r 
 	fmt.Fprintf(a.stdout, "ignores: %s\n", strings.Join(res.Ignores, ","))
 	fmt.Fprintf(a.stdout, "includes: %s\n", strings.Join(res.Includes, ","))
 	fmt.Fprintf(a.stdout, "excludes: %s\n", strings.Join(res.Excludes, ","))
+	fmt.Fprintf(a.stdout, "seed_branch: %t\n", opts.SeedBranch)
+	fmt.Fprintf(a.stdout, "branch: %s\n", branch)
 	fmt.Fprintf(a.stdout, "\nkeys:\n")
 	for _, d := range decisions {
 		mark := "x"
@@ -534,6 +624,12 @@ func (a *App) renderExplain(opts Options, args []string, res resolvedOptions, r 
 			suffix = " (lock)"
 		}
 		fmt.Fprintf(a.stdout, "  %s: preferred=%d assigned=%d probes=%d%s\n", as.Key, as.Preferred, as.Assigned, as.Probes, suffix)
+	}
+	if len(rewrites) > 0 {
+		fmt.Fprintf(a.stdout, "\nlink rewrites:\n")
+		for _, rw := range rewrites {
+			fmt.Fprintf(a.stdout, "  %s: %s -> %s (%s:%s via %s)\n", rw.SourceKey, rw.OldValue, rw.NewValue, rw.TargetRepo, rw.TargetKey, rw.PortSource)
+		}
 	}
 	fmt.Fprintf(a.stdout, "\nscan stats: files=%d env_files=%d skipped_ignore_dirs=%d skipped_max_depth=%d\n", stats.FilesVisited, stats.EnvFilesParsed, stats.SkippedIgnore, stats.SkippedMaxDepth)
 	if len(warnings) > 0 {
@@ -751,7 +847,7 @@ func (a *App) printOverrideSummary(cmdName string, cmdArgs []string, overrides m
 	keys := sortedKeys(overrides)
 
 	keyWidth := len("ENV")
-	valueWidth := len("PORT")
+	valueWidth := len("VALUE")
 	for _, key := range keys {
 		if len(key) > keyWidth {
 			keyWidth = len(key)
@@ -769,7 +865,7 @@ func (a *App) printOverrideSummary(cmdName string, cmdArgs []string, overrides m
 	border := fmt.Sprintf("+-%s-+-%s-+\n", strings.Repeat("-", keyWidth), strings.Repeat("-", valueWidth))
 	fmt.Fprintf(a.stderr, "\nautoport overrides (%d) -> %s\n", len(keys), command)
 	fmt.Fprint(a.stderr, border)
-	fmt.Fprintf(a.stderr, "| %-*s | %-*s |\n", keyWidth, "ENV", valueWidth, "PORT")
+	fmt.Fprintf(a.stderr, "| %-*s | %-*s |\n", keyWidth, "ENV", valueWidth, "VALUE")
 	fmt.Fprint(a.stderr, border)
 	for _, key := range keys {
 		fmt.Fprintf(a.stderr, "| %-*s | %-*s |\n", keyWidth, key, valueWidth, overrides[key])
@@ -809,6 +905,14 @@ func isValidEnvVarName(key string) bool {
 		}
 	}
 	return true
+}
+
+func appendBranchNamespace(namespace, branch string) string {
+	branchToken := "branch:" + branch
+	if namespace == "" {
+		return branchToken
+	}
+	return namespace + "|" + branchToken
 }
 
 func makeSet(values []string) map[string]struct{} {

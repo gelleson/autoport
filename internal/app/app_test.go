@@ -13,6 +13,7 @@ import (
 
 	"github.com/gelleson/autoport/internal/config"
 	"github.com/gelleson/autoport/internal/lockfile"
+	"github.com/gelleson/autoport/pkg/port"
 )
 
 type MockExecutor struct {
@@ -267,5 +268,331 @@ func TestApp_Run_NewFormats(t *testing.T) {
 				t.Fatalf("expected WEB_PORT in output: %s", stdout.String())
 			}
 		})
+	}
+}
+
+func TestApp_Run_BranchAwareSeedUsesResolvedBranch(t *testing.T) {
+	var stdoutA bytes.Buffer
+	var stdoutB bytes.Buffer
+	cfg := &config.Config{Presets: map[string]config.Preset{}}
+
+	appA := New(
+		WithConfig(cfg),
+		WithStdout(&stdoutA),
+		WithEnviron([]string{}),
+		WithIsFree(func(p int) bool { return true }),
+		WithBranchResolver(func(repo string) (string, error) { return "branch-a", nil }),
+	)
+	appB := New(
+		WithConfig(cfg),
+		WithStdout(&stdoutB),
+		WithEnviron([]string{}),
+		WithIsFree(func(p int) bool { return true }),
+		WithBranchResolver(func(repo string) (string, error) { return "branch-b", nil }),
+	)
+
+	opts := Options{Mode: "run", Format: "json", CWD: "/test/path", SeedBranch: true}
+	if err := appA.Run(context.Background(), opts, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := appB.Run(context.Background(), opts, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var payloadA outputPayload
+	var payloadB outputPayload
+	if err := json.Unmarshal(stdoutA.Bytes(), &payloadA); err != nil {
+		t.Fatalf("json A parse: %v", err)
+	}
+	if err := json.Unmarshal(stdoutB.Bytes(), &payloadB); err != nil {
+		t.Fatalf("json B parse: %v", err)
+	}
+	getPort := func(p outputPayload) string {
+		for _, b := range p.Overrides {
+			if strings.EqualFold(b.Key, "PORT") {
+				return b.Value
+			}
+		}
+		return ""
+	}
+	if getPort(payloadA) == "" || getPort(payloadB) == "" {
+		t.Fatalf("expected PORT in both payloads")
+	}
+	if getPort(payloadA) == getPort(payloadB) {
+		t.Fatalf("expected different PORT values for different branches; both were %q", getPort(payloadA))
+	}
+}
+
+func TestApp_Run_ExplicitTargetEnvRewrite(t *testing.T) {
+	sourceDir := t.TempDir()
+	targetDir := t.TempDir()
+	targetEnv := filepath.Join(targetDir, ".env")
+	if err := os.WriteFile(filepath.Join(sourceDir, ".env"), []byte("monitoring_url=http://localhost:31413/rpc\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetEnv, []byte("app_port=31413\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	app := New(
+		WithConfig(&config.Config{Presets: map[string]config.Preset{}}),
+		WithStdout(&stdout),
+		WithEnviron([]string{}),
+		WithIsFree(func(p int) bool { return true }),
+		WithBranchResolver(func(repo string) (string, error) { return "feature-x", nil }),
+	)
+
+	spec := "monitoring_url=" + targetEnv + ":app_port"
+	opts := Options{
+		Mode:           "run",
+		Format:         "json",
+		CWD:            sourceDir,
+		Range:          "12000-12010",
+		SeedBranch:     true,
+		TargetEnvSpecs: []string{spec},
+	}
+	if err := app.Run(context.Background(), opts, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var payload outputPayload
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json parse: %v", err)
+	}
+	var monitoring string
+	for _, b := range payload.Overrides {
+		if b.Key == "monitoring_url" {
+			monitoring = b.Value
+		}
+	}
+	if monitoring == "" {
+		t.Fatalf("expected monitoring_url override in %+v", payload.Overrides)
+	}
+	_, rewrittenPort, err := parseLoopbackURL(monitoring)
+	if err != nil {
+		t.Fatalf("expected rewritten localhost URL, got %q (%v)", monitoring, err)
+	}
+	targetSeed := port.SeedFor(targetDir, appendBranchNamespace("", "feature-x"))
+	expected := 12000 + (int(targetSeed)+1)%11 // keys are PORT, app_port => app_port index 1
+	if rewrittenPort != expected {
+		t.Fatalf("rewritten port=%d, expected=%d", rewrittenPort, expected)
+	}
+}
+
+func TestApp_Run_SmartTargetEnvRewrite(t *testing.T) {
+	sourceDir := t.TempDir()
+	targetDir := t.TempDir()
+	targetEnv := filepath.Join(targetDir, ".env")
+	if err := os.WriteFile(filepath.Join(sourceDir, ".env"), []byte("monitoring_url=http://localhost:31413/rpc\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetEnv, []byte("app_port=31413\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	app := New(
+		WithConfig(&config.Config{Presets: map[string]config.Preset{}}),
+		WithStdout(&stdout),
+		WithEnviron([]string{}),
+		WithIsFree(func(p int) bool { return true }),
+		WithBranchResolver(func(repo string) (string, error) { return "feature-x", nil }),
+	)
+	opts := Options{
+		Mode:           "run",
+		Format:         "json",
+		CWD:            sourceDir,
+		Range:          "12000-12010",
+		SeedBranch:     true,
+		TargetEnvSpecs: []string{targetEnv},
+	}
+	if err := app.Run(context.Background(), opts, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var payload outputPayload
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json parse: %v", err)
+	}
+	var found bool
+	for _, b := range payload.Overrides {
+		if b.Key == "monitoring_url" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected smart rewrite to produce monitoring_url override")
+	}
+}
+
+func TestApp_Run_BranchMismatchWarnsAndSkips(t *testing.T) {
+	sourceDir := t.TempDir()
+	targetDir := t.TempDir()
+	targetEnv := filepath.Join(targetDir, ".env")
+	if err := os.WriteFile(filepath.Join(sourceDir, ".env"), []byte("monitoring_url=http://localhost:31413/rpc\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetEnv, []byte("app_port=31413\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	app := New(
+		WithConfig(&config.Config{Presets: map[string]config.Preset{}}),
+		WithStdout(&stdout),
+		WithEnviron([]string{}),
+		WithIsFree(func(p int) bool { return true }),
+		WithBranchResolver(func(repo string) (string, error) {
+			if repo == sourceDir {
+				return "branch-a", nil
+			}
+			return "branch-b", nil
+		}),
+	)
+	spec := "monitoring_url=" + targetEnv + ":app_port"
+	opts := Options{
+		Mode:           "run",
+		Format:         "json",
+		CWD:            sourceDir,
+		Range:          "12000-12010",
+		SeedBranch:     true,
+		TargetEnvSpecs: []string{spec},
+	}
+	if err := app.Run(context.Background(), opts, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var payload outputPayload
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json parse: %v", err)
+	}
+	for _, b := range payload.Overrides {
+		if b.Key == "monitoring_url" {
+			t.Fatalf("monitoring_url should not be rewritten on branch mismatch")
+		}
+	}
+	joined := strings.Join(payload.Warnings, "\n")
+	if !strings.Contains(joined, "branch mismatch") {
+		t.Fatalf("expected branch mismatch warning, got %q", joined)
+	}
+}
+
+func TestApp_Run_TargetLockfilePreferred(t *testing.T) {
+	sourceDir := t.TempDir()
+	targetDir := t.TempDir()
+	targetEnv := filepath.Join(targetDir, ".env")
+	if err := os.WriteFile(filepath.Join(sourceDir, ".env"), []byte("monitoring_url=http://localhost:31413/rpc\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetEnv, []byte("app_port=31413\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := lockfile.Write(lockfile.PathFor(targetDir), targetDir, "12000-12010", map[string]string{"app_port": "18080"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	app := New(
+		WithConfig(&config.Config{Presets: map[string]config.Preset{}}),
+		WithStdout(&stdout),
+		WithEnviron([]string{}),
+		WithIsFree(func(p int) bool { return true }),
+		WithBranchResolver(func(repo string) (string, error) { return "feature-x", nil }),
+	)
+	spec := "monitoring_url=" + targetEnv + ":app_port"
+	opts := Options{
+		Mode:           "explain",
+		Format:         "json",
+		CWD:            sourceDir,
+		Range:          "12000-12010",
+		SeedBranch:     true,
+		TargetEnvSpecs: []string{spec},
+	}
+	if err := app.Run(context.Background(), opts, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var payload explainPayload
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json parse: %v", err)
+	}
+	if len(payload.LinkRewrites) != 1 {
+		t.Fatalf("expected one link rewrite, got %d", len(payload.LinkRewrites))
+	}
+	if payload.LinkRewrites[0].PortSource != "lockfile" {
+		t.Fatalf("expected lockfile source, got %q", payload.LinkRewrites[0].PortSource)
+	}
+	_, gotPort, err := parseLoopbackURL(payload.LinkRewrites[0].NewValue)
+	if err != nil {
+		t.Fatalf("parse rewritten URL: %v", err)
+	}
+	if gotPort != 18080 {
+		t.Fatalf("expected lockfile port 18080, got %d", gotPort)
+	}
+}
+
+func TestApp_Run_ConfigLinkFallbackDeterministic(t *testing.T) {
+	sourceDir := t.TempDir()
+	targetDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceDir, ".env"), []byte("monitoring_url=http://localhost:31413/rpc\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, ".env"), []byte("app_port=31413\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	relativeTarget, err := filepath.Rel(sourceDir, targetDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Presets: map[string]config.Preset{},
+		Links: []config.LinkRule{
+			{
+				SourceKey:     "monitoring_url",
+				TargetRepo:    relativeTarget,
+				TargetPortKey: "app_port",
+			},
+		},
+	}
+	var stdout bytes.Buffer
+	app := New(
+		WithConfig(cfg),
+		WithStdout(&stdout),
+		WithEnviron([]string{}),
+		WithIsFree(func(p int) bool { return true }),
+		WithBranchResolver(func(repo string) (string, error) { return "feature-x", nil }),
+	)
+	opts := Options{
+		Mode:       "explain",
+		Format:     "json",
+		CWD:        sourceDir,
+		Range:      "12000-12010",
+		SeedBranch: true,
+	}
+	if err := app.Run(context.Background(), opts, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var payload explainPayload
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json parse: %v", err)
+	}
+	if len(payload.LinkRewrites) != 1 {
+		t.Fatalf("expected one link rewrite, got %d", len(payload.LinkRewrites))
+	}
+	if payload.LinkRewrites[0].PortSource != "deterministic" {
+		t.Fatalf("expected deterministic source, got %q", payload.LinkRewrites[0].PortSource)
+	}
+	_, rewrittenPort, err := parseLoopbackURL(payload.LinkRewrites[0].NewValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := port.SeedFor(targetDir, appendBranchNamespace("", "feature-x"))
+	expected := 12000 + (int(seed)+1)%11
+	if rewrittenPort != expected {
+		t.Fatalf("deterministic port=%d, expected=%d", rewrittenPort, expected)
 	}
 }

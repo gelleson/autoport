@@ -25,6 +25,9 @@ func TestLoad(t *testing.T) {
 	err = os.WriteFile(configB, []byte(`{
 		"strict": true,
 		"scanner": {"ignore_dirs": ["node_modules"], "max_depth": 3},
+		"links": [
+			{"source_key": "MONITORING_URL", "target_repo": "../svc-b", "target_port_key": "APP_PORT", "same_branch": true}
+		],
 		"presets": {
 			"web": { "ignore_prefixes": ["GCP_"], "range": "9000-10000" },
 			"db2": { "ignore_prefixes": ["REDIS_"] }
@@ -62,6 +65,9 @@ func TestLoad(t *testing.T) {
 		if cfg.Scanner.MaxDepth != 3 || !reflect.DeepEqual(cfg.Scanner.IgnoreDirs, []string{"node_modules"}) {
 			t.Fatalf("unexpected scanner config: %+v", cfg.Scanner)
 		}
+		if len(cfg.Links) != 1 || cfg.Links[0].SourceKey != "MONITORING_URL" {
+			t.Fatalf("unexpected links: %+v", cfg.Links)
+		}
 	})
 
 	t.Run("non-existent file", func(t *testing.T) {
@@ -82,6 +88,22 @@ func TestLoad(t *testing.T) {
 			t.Fatalf("expected parse errors")
 		}
 	})
+}
+
+func TestLoad_InvalidLinkRuleIsReported(t *testing.T) {
+	tmpDir := t.TempDir()
+	p := filepath.Join(tmpDir, "links.json")
+	if err := os.WriteFile(p, []byte(`{
+		"version": 2,
+		"links": [{"target_repo":"../svc-b"}]
+	}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Load([]string{p})
+	if !cfg.HasErrors() {
+		t.Fatalf("expected invalid link rule to produce errors")
+	}
 }
 
 func TestLoad_LegacyIgnoreMapping(t *testing.T) {

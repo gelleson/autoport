@@ -100,7 +100,8 @@ func (s *Scanner) isIgnored(key string) bool {
 }
 
 func isPortKey(key string) bool {
-	return key == "PORT" || strings.HasSuffix(key, "_PORT")
+	up := strings.ToUpper(key)
+	return up == "PORT" || strings.HasSuffix(up, "_PORT")
 }
 
 // Scan discovers port-related keys from the environment and .env files.

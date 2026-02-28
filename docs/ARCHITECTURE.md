@@ -26,6 +26,7 @@ port = start + (hash + index) % range_size
 ```
 - **Collision Handling**: If the target port is already in use, it probes the next port in the range sequentially until a free one is found.
 - **IsFree Check**: It attempts to open a TCP listener on the port to verify its availability.
+- **Allocator API**: `pkg/port` exposes `Range` and `Allocator` types so callers can parse once and allocate many deterministic ports cleanly.
 
 ### 4. Configuration and Presets (`internal/config`)
 Presets allow users to ignore specific environment variables (like `DB_PORT`) that shouldn't be managed by `autoport`.
@@ -52,8 +53,10 @@ User Command -> main.go -> app.Run()
            scanner.Scan() (Environment & .env files)
                    |
                    v
-           port.FindDeterministic() (Hashing & Probing)
+           port.Allocator.PortFor() (Hashing & Probing)
                    |
                    v
            executor.Run() (Sub-process execution)
 ```
+
+`main.go` is intentionally thin and delegates argument parsing to a dedicated parser function before handing off to `app.Run`.

@@ -50,7 +50,7 @@ func TestScanner_ScanFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"PORT", "WEB_PORT"} 
+	want := []string{"PORT", "WEB_PORT"}
 
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Scanner.Scan() = %v, want %v", got, want)
@@ -66,5 +66,31 @@ func TestScanner_Cancel(t *testing.T) {
 	_, err := s.Scan(ctx)
 	if err == nil {
 		t.Error("Expected error from cancelled context")
+	}
+}
+
+func TestScanner_ScanFiles_SkipsHiddenDirectories(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	hiddenDir := filepath.Join(tmpDir, ".hidden")
+	if err := os.Mkdir(hiddenDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hiddenDir, ".env"), []byte("HIDDEN_PORT=3001\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("VISIBLE_PORT=3000\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(tmpDir, WithEnviron([]string{}))
+	got, err := s.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"PORT", "VISIBLE_PORT"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Scanner.Scan() = %v, want %v", got, want)
 	}
 }

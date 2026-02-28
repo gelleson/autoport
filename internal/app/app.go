@@ -103,73 +103,112 @@ func New(opts ...AppOption) *App {
 
 // Run executes the main application workflow.
 func (a *App) Run(ctx context.Context, opts Options, args []string) error {
-	finalIgnores := append([]string{}, opts.Ignores...)
-	finalRange := port.DefaultRange
-
-	for _, pName := range opts.Presets {
-		p, ok := config.BuiltInPresets[pName]
-		if !ok && a.config != nil {
-			p, ok = a.config.Presets[pName]
-		}
-		if ok {
-			finalIgnores = append(finalIgnores, p.Ignore...)
-			if p.Range != "" && opts.Range == "" {
-				finalRange = p.Range
-			}
-		} else {
-			a.logger.Warn("preset not found", slog.String("preset", pName))
-		}
-	}
-
-	if opts.Range != "" {
-		finalRange = opts.Range
-	}
-
-	start, end, err := port.ParseRange(finalRange)
+	finalIgnores, finalRange := a.resolvePresetOverrides(opts)
+	r, err := port.ParseRange(finalRange)
 	if err != nil {
 		return fmt.Errorf("range: %w", err)
 	}
 
-	seed := port.HashPath(opts.CWD)
-
-	s := scanner.New(opts.CWD, 
-		scanner.WithIgnores(finalIgnores),
-		scanner.WithEnviron(a.environ),
-	)
-	
-	portKeys, err := s.Scan(ctx)
+	portKeys, err := a.scanPortKeys(ctx, opts.CWD, finalIgnores)
 	if err != nil {
 		return fmt.Errorf("scan: %w", err)
 	}
 
-	overrides := make(map[string]string)
-	for i, key := range portKeys {
-		p, err := port.FindDeterministic(seed, i, start, end, a.isFree)
-		if err != nil {
-			return fmt.Errorf("find port for %s: %w", key, err)
-		}
-		overrides[key] = strconv.Itoa(p)
+	overrides, err := a.assignPorts(opts.CWD, r, portKeys)
+	if err != nil {
+		return err
 	}
 
 	if len(args) == 0 {
-		var keys []string
-		for k := range overrides {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			fmt.Fprintf(a.stdout, "export %s=%s\n", k, overrides[k])
-		}
+		a.printExports(overrides)
 		return nil
 	}
 
+	env := a.buildExecEnv(overrides)
 	cmdName := args[0]
 	cmdArgs := args[1:]
+	return a.executor.Run(ctx, cmdName, cmdArgs, env, a.stdout, os.Stderr)
+}
 
-	env := append([]string{}, a.environ...)
-	for k, v := range overrides {
-		env = append(env, fmt.Sprintf("%s=%s", k, v))
+func (a *App) resolvePresetOverrides(opts Options) (ignores []string, rangeSpec string) {
+	ignores = append([]string{}, opts.Ignores...)
+	rangeSpec = port.DefaultRange
+
+	for _, presetName := range opts.Presets {
+		preset, ok := a.lookupPreset(presetName)
+		if !ok {
+			a.logger.Warn("preset not found", slog.String("preset", presetName))
+			continue
+		}
+
+		ignores = append(ignores, preset.Ignore...)
+		if preset.Range != "" && opts.Range == "" {
+			rangeSpec = preset.Range
+		}
 	}
 
-	return a.executor.Run(ctx, cmdName, cmdArgs, env, a.stdout, os.Stderr)
+	if opts.Range != "" {
+		rangeSpec = opts.Range
+	}
+	return ignores, rangeSpec
+}
+
+func (a *App) lookupPreset(name string) (config.Preset, bool) {
+	if preset, ok := config.BuiltInPresets[name]; ok {
+		return preset, true
+	}
+	if a.config == nil {
+		return config.Preset{}, false
+	}
+	preset, ok := a.config.Presets[name]
+	return preset, ok
+}
+
+func (a *App) scanPortKeys(ctx context.Context, cwd string, ignores []string) ([]string, error) {
+	s := scanner.New(cwd,
+		scanner.WithIgnores(ignores),
+		scanner.WithEnviron(a.environ),
+	)
+	return s.Scan(ctx)
+}
+
+func (a *App) assignPorts(cwd string, r port.Range, portKeys []string) (map[string]string, error) {
+	allocator := port.Allocator{
+		Seed:   port.HashPath(cwd),
+		Range:  r,
+		IsFree: a.isFree,
+	}
+	overrides := make(map[string]string)
+	for i, key := range portKeys {
+		p, err := allocator.PortFor(i)
+		if err != nil {
+			return nil, fmt.Errorf("find port for %s: %w", key, err)
+		}
+		overrides[key] = strconv.Itoa(p)
+	}
+	return overrides, nil
+}
+
+func (a *App) printExports(overrides map[string]string) {
+	keys := sortedKeys(overrides)
+	for _, key := range keys {
+		fmt.Fprintf(a.stdout, "export %s=%s\n", key, overrides[key])
+	}
+}
+
+func (a *App) buildExecEnv(overrides map[string]string) []string {
+	env := append([]string{}, a.environ...)
+	for key, value := range overrides {
+		env = append(env, fmt.Sprintf("%s=%s", key, value))
+	}
+	return env
+}
+
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }

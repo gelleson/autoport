@@ -26,21 +26,18 @@ var BuiltInPresets = map[string]Preset{
 
 // Load reads configuration from the provided file paths, merging them in order.
 func Load(paths []string) *Config {
-	var config Config
-	config.Presets = make(map[string]Preset)
+	cfg := &Config{
+		Presets: make(map[string]Preset),
+	}
 
 	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err == nil {
-			var localConfig Config
-			if err := json.Unmarshal(data, &localConfig); err == nil {
-				for k, v := range localConfig.Presets {
-					config.Presets[k] = v
-				}
-			}
+		localConfig, ok := loadFile(path)
+		if !ok {
+			continue
 		}
+		mergePresets(cfg.Presets, localConfig.Presets)
 	}
-	return &config
+	return cfg
 }
 
 // LoadDefault loads configurations from default locations: home dir and current dir.
@@ -51,4 +48,24 @@ func LoadDefault() *Config {
 		".autoport.json",
 	}
 	return Load(paths)
+}
+
+func loadFile(path string) (Config, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, false
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return Config{}, false
+	}
+
+	return cfg, true
+}
+
+func mergePresets(dst, src map[string]Preset) {
+	for key, value := range src {
+		dst[key] = value
+	}
 }

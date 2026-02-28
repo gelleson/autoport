@@ -60,64 +60,20 @@ func (s *Scanner) isIgnored(key string) bool {
 	return false
 }
 
+func isPortKey(key string) bool {
+	return key == "PORT" || strings.HasSuffix(key, "_PORT")
+}
+
 // Scan discovers port-related keys from the environment and .env files.
 // It respects the provided context for cancellation.
 func (s *Scanner) Scan(ctx context.Context) ([]string, error) {
 	portKeyMap := make(map[string]struct{})
 
-	// Scan environment variables
-	for _, environmentVar := range s.environ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		parts := strings.SplitN(environmentVar, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := parts[0]
-		if s.isIgnored(key) {
-			continue
-		}
-		if key == "PORT" || strings.HasSuffix(key, "_PORT") {
-			portKeyMap[key] = struct{}{}
-		}
+	if err := s.scanEnvironment(ctx, portKeyMap); err != nil {
+		return nil, err
 	}
 
-	// Scan filesystem for .env files using more efficient WalkDir
-	err := filepath.WalkDir(s.cwd, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil // Skip files with errors
-		}
-		
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		if d.IsDir() {
-			if strings.HasPrefix(d.Name(), ".") && d.Name() != "." {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		name := d.Name()
-		if name == ".env" || strings.HasPrefix(name, ".env.") {
-			file, err := os.Open(path)
-			if err != nil {
-				return nil
-			}
-			defer file.Close()
-
-			keys := env.ExtractPortKeys(file)
-			for _, k := range keys {
-				if s.isIgnored(k) {
-					continue
-				}
-				portKeyMap[k] = struct{}{}
-			}
-		}
-		return nil
-	})
+	err := s.scanEnvFiles(ctx, portKeyMap)
 
 	if err != nil && err != context.Canceled && err != context.DeadlineExceeded {
 		return nil, err
@@ -133,4 +89,71 @@ func (s *Scanner) Scan(ctx context.Context) ([]string, error) {
 	}
 	sort.Strings(portKeys)
 	return portKeys, ctx.Err()
+}
+
+func (s *Scanner) scanEnvironment(ctx context.Context, out map[string]struct{}) error {
+	for _, environmentVar := range s.environ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		parts := strings.SplitN(environmentVar, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		key := parts[0]
+		if s.isIgnored(key) || !isPortKey(key) {
+			continue
+		}
+
+		out[key] = struct{}{}
+	}
+	return nil
+}
+
+func (s *Scanner) scanEnvFiles(ctx context.Context, out map[string]struct{}) error {
+	return filepath.WalkDir(s.cwd, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		if d.IsDir() {
+			if isHiddenDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if !isEnvFile(d.Name()) {
+			return nil
+		}
+
+		file, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		defer file.Close()
+
+		keys := env.ExtractPortKeys(file)
+		for _, key := range keys {
+			if s.isIgnored(key) || !isPortKey(key) {
+				continue
+			}
+			out[key] = struct{}{}
+		}
+		return nil
+	})
+}
+
+func isHiddenDir(name string) bool {
+	return strings.HasPrefix(name, ".") && name != "."
+}
+
+func isEnvFile(name string) bool {
+	return name == ".env" || strings.HasPrefix(name, ".env.")
 }

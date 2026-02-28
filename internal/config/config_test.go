@@ -62,4 +62,21 @@ func TestLoad(t *testing.T) {
 			t.Errorf("Load() should be empty for non-existent files")
 		}
 	})
+
+	t.Run("invalid json is ignored", func(t *testing.T) {
+		broken := filepath.Join(tmpDir, "broken.json")
+		if err := os.WriteFile(broken, []byte(`{"presets":`), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := Load([]string{broken, configA})
+		expected := &Config{
+			Presets: map[string]Preset{
+				"web": {Ignore: []string{"AWS_"}, Range: "8000-9000"},
+			},
+		}
+		if !reflect.DeepEqual(cfg, expected) {
+			t.Errorf("Load() = %v, want %v", cfg, expected)
+		}
+	})
 }

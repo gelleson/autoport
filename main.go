@@ -59,21 +59,31 @@ func main() {
 
 // run parses CLI flags and executes the application logic.
 func run(ctx context.Context) error {
+	opts, cmdArgs, err := parseCLIArgs(os.Args[1:])
+	if err != nil {
+		return err
+	}
+
+	application := app.New()
+	return application.Run(ctx, opts, cmdArgs)
+}
+
+func parseCLIArgs(args []string) (app.Options, []string, error) {
 	var ignores ignoreFlags
 	var presets presetFlags
-	
+
 	fs := flag.NewFlagSet("autoport", flag.ExitOnError)
 	rangeFlag := fs.String("r", "", "Port range to use (e.g., 3000-4000). Default is 10000-20000.")
 	fs.Var(&ignores, "i", "Ignore environment variables starting with this prefix (can be used multiple times)")
 	fs.Var(&presets, "p", "Apply a preset (built-in or from .autoport.json)")
-	
-	if err := fs.Parse(os.Args[1:]); err != nil {
-		return err
+
+	if err := fs.Parse(args); err != nil {
+		return app.Options{}, nil, err
 	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("get cwd: %w", err)
+		return app.Options{}, nil, fmt.Errorf("get cwd: %w", err)
 	}
 
 	opts := app.Options{
@@ -82,7 +92,5 @@ func run(ctx context.Context) error {
 		Range:   *rangeFlag,
 		CWD:     cwd,
 	}
-
-	application := app.New()
-	return application.Run(ctx, opts, fs.Args())
+	return opts, fs.Args(), nil
 }

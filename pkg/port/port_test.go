@@ -6,31 +6,27 @@ import (
 
 func TestParseRange(t *testing.T) {
 	tests := []struct {
-		name      string
-		r         string
-		wantStart int
-		wantEnd   int
-		wantErr   bool
+		name    string
+		r       string
+		want    Range
+		wantErr bool
 	}{
-		{"valid range", "3000-4000", 3000, 4000, false},
-		{"invalid format", "3000", 0, 0, true},
-		{"invalid start", "abc-4000", 0, 0, true},
-		{"invalid end", "3000-abc", 0, 0, true},
-		{"start > end", "4000-3000", 0, 0, true},
+		{"valid range", "3000-4000", Range{Start: 3000, End: 4000}, false},
+		{"invalid format", "3000", Range{}, true},
+		{"invalid start", "abc-4000", Range{}, true},
+		{"invalid end", "3000-abc", Range{}, true},
+		{"start > end", "4000-3000", Range{}, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			start, end, err := ParseRange(tt.r)
+			got, err := ParseRange(tt.r)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseRange() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if start != tt.wantStart {
-				t.Errorf("ParseRange() start = %v, want %v", start, tt.wantStart)
-			}
-			if end != tt.wantEnd {
-				t.Errorf("ParseRange() end = %v, want %v", end, tt.wantEnd)
+			if got != tt.want {
+				t.Errorf("ParseRange() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
@@ -49,41 +45,52 @@ func TestHashPath(t *testing.T) {
 	}
 }
 
-func TestFindDeterministic(t *testing.T) {
+func TestAllocator_PortFor(t *testing.T) {
 	seed := uint32(12345)
-	start := 10000
-	end := 10009 // range size 10
+	r := Range{Start: 10000, End: 10009} // range size 10
 
 	t.Run("first port free", func(t *testing.T) {
-		isFree := func(p int) bool { return true }
-		p, err := FindDeterministic(seed, 0, start, end, isFree)
-		if err != nil {
-			t.Errorf("FindDeterministic() unexpected error: %v", err)
+		a := Allocator{
+			Seed:   seed,
+			Range:  r,
+			IsFree: func(p int) bool { return true },
 		}
-		if p < start || p > end {
-			t.Errorf("FindDeterministic() returned port out of bounds: %d", p)
+		p, err := a.PortFor(0)
+		if err != nil {
+			t.Errorf("PortFor() unexpected error: %v", err)
+		}
+		if p < r.Start || p > r.End {
+			t.Errorf("PortFor() returned port out of bounds: %d", p)
 		}
 	})
 
 	t.Run("first port taken, second free", func(t *testing.T) {
-		expectedPort := start + (int(seed)+0)%10
-		isFree := func(p int) bool {
-			return p != expectedPort // Only the first expected one is taken
+		expectedPort := r.Start + (int(seed)+0)%10
+		a := Allocator{
+			Seed:  seed,
+			Range: r,
+			IsFree: func(p int) bool {
+				return p != expectedPort // Only the first expected one is taken
+			},
 		}
-		p, err := FindDeterministic(seed, 0, start, end, isFree)
+		p, err := a.PortFor(0)
 		if err != nil {
-			t.Errorf("FindDeterministic() unexpected error: %v", err)
+			t.Errorf("PortFor() unexpected error: %v", err)
 		}
 		if p == expectedPort {
-			t.Errorf("FindDeterministic() returned taken port")
+			t.Errorf("PortFor() returned taken port")
 		}
 	})
 
 	t.Run("no ports free", func(t *testing.T) {
-		isFree := func(p int) bool { return false }
-		_, err := FindDeterministic(seed, 0, start, end, isFree)
+		a := Allocator{
+			Seed:   seed,
+			Range:  r,
+			IsFree: func(p int) bool { return false },
+		}
+		_, err := a.PortFor(0)
 		if err == nil {
-			t.Errorf("FindDeterministic() expected error when no ports free")
+			t.Errorf("PortFor() expected error when no ports free")
 		}
 	})
 }

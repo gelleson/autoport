@@ -1,82 +1,90 @@
 # Examples
 
-This document provides advanced usage examples for `autoport`.
-
-## 1. Multi-Service Development
-
-If you are running multiple microservices locally, `autoport` ensures they don't collide without you having to manually manage a spreadsheet of ports.
+## Start a service normally
 
 ```bash
-# In service-a directory
-autoport go run main.go
-
-# In service-b directory
 autoport npm start
 ```
 
-Each service will get a deterministic port based on its path.
-
-## 2. Using with Docker Compose
-
-You can use `autoport` to dynamically assign ports to services in a Docker Compose setup by passing them as environment variables.
+## Run Go service with deterministic ports
 
 ```bash
-# Set ports for the current session
-eval $(autoport)
-
-# Run docker-compose
-docker-compose up
+autoport go run ./cmd/api
 ```
 
-Ensure your `docker-compose.yml` uses the variables:
-```yaml
-services:
-  web:
-    build: .
-    ports:
-      - "${PORT}:${PORT}"
-```
-
-## 3. CI/CD Pipelines
-
-In CI environments where multiple builds might run on the same agent, `autoport` helps avoid collisions during integration tests.
+## Export ports into current shell
 
 ```bash
-# Run tests with a random but consistent port based on the build directory
-autoport go test ./...
+eval "$(autoport)"
 ```
 
-## 4. Custom Range for Specific Projects
-
-If you have a project that requires ports in the 8000 range:
+Then run tools that read environment variables:
 
 ```bash
-autoport -r 8000-8100 npm start
+docker compose up
 ```
 
-## 5. Ignoring Specific Variables
-
-If your application uses `REDIS_PORT` and you want to keep it at the default `6379`, use the ignore flag:
+## Use a custom range
 
 ```bash
-autoport -i REDIS_ npm start
+autoport -r 7000-7099 npm run dev
 ```
 
-Or use the built-in database preset:
+## Ignore specific prefixes
+
+Ignore database variables while still managing app ports:
+
+```bash
+autoport -i DB_ -i REDIS_ npm start
+```
+
+## Use built-in database preset
 
 ```bash
 autoport -p db npm start
 ```
 
-## 6. Shell Integration
+## Use custom preset from config
 
-Add an alias to your `.zshrc` or `.bashrc` for even faster usage:
+`~/.autoport.json` or `./.autoport.json`:
 
-```bash
-alias ap='autoport'
+```json
+{
+  "presets": {
+    "web": {
+      "ignore": ["STRIPE_", "AWS_"],
+      "range": "8000-8099"
+    }
+  }
+}
 ```
 
-Then run:
+Run:
+
 ```bash
-ap npm start
+autoport -p web npm run dev
 ```
+
+## Multiple services in one machine
+
+In each project directory, run your normal command through `autoport`:
+
+```bash
+# service-a
+cd ~/work/service-a
+autoport npm start
+
+# service-b
+cd ~/work/service-b
+autoport go run .
+```
+
+Each service gets deterministic ports based on its own directory path.
+
+## CI usage
+
+```bash
+autoport go test ./...
+```
+
+Useful when parallel jobs share a host and default ports might collide.

@@ -46,8 +46,7 @@ if [ "$VERSION" = "latest" ]; then
   fi
 fi
 
-ARCHIVE="${BINARY}_${VERSION}_${OS}_${ARCH}.tar.gz"
-URL="https://github.com/$REPO/releases/download/$VERSION/$ARCHIVE"
+VERSION_NUM="${VERSION#v}"
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
@@ -55,12 +54,37 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "Downloading $URL"
-curl -fL "$URL" -o "$TMP_DIR/$ARCHIVE"
-tar -xzf "$TMP_DIR/$ARCHIVE" -C "$TMP_DIR"
+ASSET=""
+for candidate in \
+  "${BINARY}_${VERSION}_${OS}_${ARCH}.tar.gz" \
+  "${BINARY}_${VERSION_NUM}_${OS}_${ARCH}.tar.gz" \
+  "${BINARY}_${VERSION}_${OS}_${ARCH}" \
+  "${BINARY}_${VERSION_NUM}_${OS}_${ARCH}"
+do
+  URL="https://github.com/$REPO/releases/download/$VERSION/$candidate"
+  echo "Downloading $URL"
+  if curl -fsSL "$URL" -o "$TMP_DIR/$candidate"; then
+    ASSET="$candidate"
+    break
+  fi
+done
+
+if [ -z "$ASSET" ]; then
+  echo "error: no matching release asset found for ${OS}/${ARCH} under tag ${VERSION}" >&2
+  exit 1
+fi
+
+case "$ASSET" in
+  *.tar.gz)
+    tar -xzf "$TMP_DIR/$ASSET" -C "$TMP_DIR"
+    SOURCE="$TMP_DIR/$BINARY"
+    ;;
+  *)
+    SOURCE="$TMP_DIR/$ASSET"
+    ;;
+esac
 
 TARGET="$INSTALL_DIR/$BINARY"
-SOURCE="$TMP_DIR/$BINARY"
 
 if [ ! -d "$INSTALL_DIR" ]; then
   mkdir -p "$INSTALL_DIR" 2>/dev/null || true

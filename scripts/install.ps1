@@ -18,20 +18,45 @@ if ($Version -eq "latest") {
   }
 }
 
-$Archive = "autoport_${Version}_${Os}_${Arch}.zip"
-$Url = "https://github.com/$Repo/releases/download/$Version/$Archive"
+$VersionNum = $Version.TrimStart("v")
 $TempDir = Join-Path $env:TEMP ("autoport-install-" + [Guid]::NewGuid().ToString())
-$ZipPath = Join-Path $TempDir $Archive
 
 New-Item -ItemType Directory -Path $TempDir | Out-Null
 if (-not (Test-Path $InstallDir)) {
   New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 }
 
-Write-Host "Downloading $Url"
-Invoke-WebRequest -Uri $Url -OutFile $ZipPath
-Expand-Archive -Path $ZipPath -DestinationPath $TempDir -Force
-Copy-Item -Path (Join-Path $TempDir $Binary) -Destination (Join-Path $InstallDir $Binary) -Force
+$Candidates = @(
+  "autoport_${Version}_${Os}_${Arch}.zip",
+  "autoport_${VersionNum}_${Os}_${Arch}.zip",
+  "autoport_${Version}_${Os}_${Arch}.exe",
+  "autoport_${VersionNum}_${Os}_${Arch}.exe"
+)
+
+$Asset = $null
+foreach ($Candidate in $Candidates) {
+  $Url = "https://github.com/$Repo/releases/download/$Version/$Candidate"
+  $OutPath = Join-Path $TempDir $Candidate
+  Write-Host "Downloading $Url"
+  try {
+    Invoke-WebRequest -Uri $Url -OutFile $OutPath
+    $Asset = $Candidate
+    break
+  } catch {
+  }
+}
+
+if (-not $Asset) {
+  throw "No matching release asset found for $Os/$Arch under tag $Version"
+}
+
+$AssetPath = Join-Path $TempDir $Asset
+if ($Asset.EndsWith(".zip")) {
+  Expand-Archive -Path $AssetPath -DestinationPath $TempDir -Force
+  Copy-Item -Path (Join-Path $TempDir $Binary) -Destination (Join-Path $InstallDir $Binary) -Force
+} else {
+  Copy-Item -Path $AssetPath -Destination (Join-Path $InstallDir $Binary) -Force
+}
 
 Write-Host "Installed $Binary $Version to $InstallDir"
 Write-Host "Add '$InstallDir' to PATH if needed."

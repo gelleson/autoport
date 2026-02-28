@@ -24,11 +24,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run tests
-        run: go test ./...
+      - name: Set up just
+        uses: taiki-e/install-action@just
 
-      - name: Run E2E tests
-        run: go test -tags e2e ./e2e -v
+      - name: Run checks
+        run: just ci
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6

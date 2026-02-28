@@ -22,6 +22,12 @@ It discovers `PORT` and `*_PORT` environment keys, assigns free ports based on y
 go install github.com/gelleson/autoport@latest
 ```
 
+Install the local development checkout:
+
+```bash
+go install .
+```
+
 Single-line installer (macOS/Linux):
 
 ```bash
@@ -32,6 +38,13 @@ Windows (PowerShell):
 
 ```powershell
 irm https://raw.githubusercontent.com/gelleson/autoport/main/scripts/install.ps1 | iex
+```
+
+Using `just` tasks:
+
+```bash
+just install      # latest release from module path
+just install-dev  # local checkout -> /usr/local/bin/autoport (version=dev, build time embedded)
 ```
 
 ## Quick Start

@@ -22,22 +22,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Verify formatting
-        run: |
-          if [ -n "$(gofmt -l .)" ]; then
-            echo "Go files are not formatted with gofmt"
-            gofmt -l .
-            exit 1
-          fi
+      - name: Set up just
+        uses: taiki-e/install-action@just
 
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test ./...
-
-      - name: E2E tests
-        run: go test -tags e2e ./e2e -v
+      - name: CI checks
+        run: just ci
 
   build:
     runs-on: ubuntu-latest
@@ -51,5 +40,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up just
+        uses: taiki-e/install-action@just
+
       - name: Build
-        run: go build ./...
+        run: just build

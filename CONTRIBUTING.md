@@ -13,6 +13,16 @@ cd autoport
 go build -o autoport ./main.go
 ```
 
+Optional task runner:
+
+```bash
+# https://github.com/casey/just
+just build
+just install-dev
+```
+
+`just install-dev` installs `/usr/local/bin/autoport` from the local checkout and embeds `version=dev` with current UTC build time.
+
 ## Quality checks
 
 Run before opening a PR:
@@ -22,6 +32,15 @@ gofmt -w .
 go test ./...
 go test -cover ./...
 go vet ./...
+```
+
+Or run equivalent `just` tasks:
+
+```bash
+just fmt
+just test
+just test-cover
+just vet
 ```
 
 ## Project map

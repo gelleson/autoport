@@ -8,8 +8,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -83,6 +85,11 @@ func main() {
 func run(ctx context.Context) error {
 	opts, cmdArgs, err := parseCLIArgs(os.Args[1:])
 	if err != nil {
+		var helpErr *helpRequestedError
+		if errors.As(err, &helpErr) {
+			printHelp(os.Stdout, helpErr.Mode)
+			return nil
+		}
 		return err
 	}
 	if opts.Mode == "version" || isVersionCommand(cmdArgs) {
@@ -143,6 +150,9 @@ func parseCLIArgs(args []string) (app.Options, []string, error) {
 	fs.Var(&excludes, "exclude", "Exclude exact port key (can be used multiple times)")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return app.Options{}, nil, &helpRequestedError{Mode: targetMode}
+		}
 		return app.Options{}, nil, err
 	}
 
@@ -188,6 +198,42 @@ type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) {
 	return len(p), nil
+}
+
+type helpRequestedError struct {
+	Mode string
+}
+
+func (e *helpRequestedError) Error() string {
+	return "help requested"
+}
+
+func printHelp(w io.Writer, mode string) {
+	fmt.Fprintln(w, "autoport - deterministic port wrapper")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  autoport [flags] [command ...]")
+	fmt.Fprintln(w, "  autoport explain [flags]")
+	fmt.Fprintln(w, "  autoport doctor [flags]")
+	fmt.Fprintln(w, "  autoport lock [flags]")
+	fmt.Fprintln(w, "  autoport version")
+	fmt.Fprintln(w)
+	switch mode {
+	case "explain":
+		fmt.Fprintln(w, "Explain flags: -r, -p, -i, --include, --exclude, -k, --namespace, --seed, -f text|json")
+	case "doctor":
+		fmt.Fprintln(w, "Doctor flags: -r, -p, -i, --include, --exclude, -k, --namespace, --seed, --use-lock, -f text|json")
+	case "lock":
+		fmt.Fprintln(w, "Lock flags: -r, -p, -i, --include, --exclude, -k, --namespace, --seed")
+	default:
+		fmt.Fprintln(w, "Run/export flags: -r, -p, -i, --include, --exclude, -k, --namespace, --seed, --use-lock, -f shell|json|dotenv|yaml, -q, -n")
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Examples:")
+	fmt.Fprintln(w, "  autoport npm start")
+	fmt.Fprintln(w, "  autoport explain -f json")
+	fmt.Fprintln(w, "  autoport doctor")
+	fmt.Fprintln(w, "  autoport lock && autoport --use-lock npm start")
 }
 
 func defaultFormatForMode(mode string) string {

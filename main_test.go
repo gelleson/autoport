@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"io"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -100,6 +104,45 @@ func TestParseCLIArgs_InvalidFormat(t *testing.T) {
 	_, _, err := parseCLIArgs([]string{"-f", "xml"})
 	if err == nil {
 		t.Fatal("parseCLIArgs() expected error for invalid format")
+	}
+}
+
+func TestParseCLIArgs_HelpReturnsTypedError(t *testing.T) {
+	_, _, err := parseCLIArgs([]string{"--help"})
+	if err == nil {
+		t.Fatal("expected help error")
+	}
+	var helpErr *helpRequestedError
+	if !errors.As(err, &helpErr) {
+		t.Fatalf("expected helpRequestedError, got %T", err)
+	}
+}
+
+func TestRun_HelpDoesNotReturnError(t *testing.T) {
+	prevArgs := os.Args
+	prevStdout := os.Stdout
+	defer func() {
+		os.Args = prevArgs
+		os.Stdout = prevStdout
+	}()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	os.Args = []string{"autoport", "--help"}
+
+	runErr := run(context.Background())
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	_ = r.Close()
+
+	if runErr != nil {
+		t.Fatalf("expected nil error, got %v", runErr)
+	}
+	if !strings.Contains(string(out), "Usage:") {
+		t.Fatalf("expected usage output, got: %s", string(out))
 	}
 }
 

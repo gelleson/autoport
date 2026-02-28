@@ -43,6 +43,18 @@ func (p *presetFlags) Set(value string) error {
 	return nil
 }
 
+// portEnvFlags is a custom flag type to collect manual port env keys.
+type portEnvFlags []string
+
+func (p *portEnvFlags) String() string {
+	return strings.Join(*p, ",")
+}
+
+func (p *portEnvFlags) Set(value string) error {
+	*p = append(*p, value)
+	return nil
+}
+
 func main() {
 	// Handle termination signals gracefully.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -71,11 +83,13 @@ func run(ctx context.Context) error {
 func parseCLIArgs(args []string) (app.Options, []string, error) {
 	var ignores ignoreFlags
 	var presets presetFlags
+	var portEnv portEnvFlags
 
 	fs := flag.NewFlagSet("autoport", flag.ExitOnError)
 	rangeFlag := fs.String("r", "", "Port range to use (e.g., 3000-4000). Default is 10000-20000.")
 	fs.Var(&ignores, "i", "Ignore environment variables starting with this prefix (can be used multiple times)")
 	fs.Var(&presets, "p", "Apply a preset (built-in or from .autoport.json)")
+	fs.Var(&portEnv, "k", "Include a port environment key manually (can be used multiple times)")
 
 	if err := fs.Parse(args); err != nil {
 		return app.Options{}, nil, err
@@ -89,6 +103,7 @@ func parseCLIArgs(args []string) (app.Options, []string, error) {
 	opts := app.Options{
 		Ignores: ignores,
 		Presets: presets,
+		PortEnv: portEnv,
 		Range:   *rangeFlag,
 		CWD:     cwd,
 	}

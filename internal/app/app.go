@@ -19,6 +19,7 @@ import (
 type Options struct {
 	Ignores []string
 	Presets []string
+	PortEnv []string
 	Range   string
 	CWD     string
 }
@@ -112,6 +113,10 @@ func (a *App) Run(ctx context.Context, opts Options, args []string) error {
 	portKeys, err := a.scanPortKeys(ctx, opts.CWD, finalIgnores)
 	if err != nil {
 		return fmt.Errorf("scan: %w", err)
+	}
+	portKeys, err = mergePortKeys(portKeys, opts.PortEnv)
+	if err != nil {
+		return fmt.Errorf("manual port env: %w", err)
 	}
 
 	overrides, err := a.assignPorts(opts.CWD, r, portKeys)
@@ -211,4 +216,50 @@ func sortedKeys(values map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func mergePortKeys(scanned, manual []string) ([]string, error) {
+	keySet := make(map[string]struct{}, len(scanned)+len(manual))
+	for _, key := range scanned {
+		keySet[key] = struct{}{}
+	}
+
+	for _, key := range manual {
+		if !isValidEnvVarName(key) {
+			return nil, fmt.Errorf("invalid env key %q", key)
+		}
+		keySet[key] = struct{}{}
+	}
+
+	out := make([]string, 0, len(keySet))
+	for key := range keySet {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func isValidEnvVarName(key string) bool {
+	if key == "" {
+		return false
+	}
+
+	for i, r := range key {
+		isUpper := r >= 'A' && r <= 'Z'
+		isLower := r >= 'a' && r <= 'z'
+		isDigit := r >= '0' && r <= '9'
+		isUnderscore := r == '_'
+
+		if i == 0 {
+			if !(isUpper || isLower || isUnderscore) {
+				return false
+			}
+			continue
+		}
+
+		if !(isUpper || isLower || isDigit || isUnderscore) {
+			return false
+		}
+	}
+	return true
 }

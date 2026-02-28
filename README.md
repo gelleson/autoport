@@ -55,6 +55,7 @@ Flags:
 - `-r <start-end>`: Port range (default: `10000-20000`)
 - `-p <name>`: Preset name (repeatable)
 - `-i <prefix>`: Ignore env keys starting with prefix (repeatable)
+- `-k <env_key>`: Include a port env key manually (repeatable), e.g. `WEB_PORT`
 
 Behavior:
 - With `command`: executes command with port overrides in process env

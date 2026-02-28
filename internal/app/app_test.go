@@ -168,3 +168,54 @@ func TestApp_printExports_Sorted(t *testing.T) {
 		t.Fatalf("printExports() = %q, want %q", got, want)
 	}
 }
+
+func TestApp_Run_ManualPortEnvKeys(t *testing.T) {
+	var stdout bytes.Buffer
+	app := New(
+		WithConfig(&config.Config{}),
+		WithStdout(&stdout),
+		WithEnviron([]string{}),
+		WithIsFree(func(p int) bool { return true }),
+	)
+
+	opts := Options{
+		PortEnv: []string{"WEB_PORT"},
+		Range:   "10000-11000",
+		CWD:     "/test/path",
+	}
+
+	err := app.Run(context.Background(), opts, []string{})
+	if err != nil {
+		t.Fatalf("Run() unexpected error: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "export PORT=") {
+		t.Fatalf("Expected PORT fallback to be exported, got: %s", out)
+	}
+	if !strings.Contains(out, "export WEB_PORT=") {
+		t.Fatalf("Expected WEB_PORT to be exported, got: %s", out)
+	}
+}
+
+func TestApp_Run_InvalidManualPortEnvKey(t *testing.T) {
+	app := New(
+		WithConfig(&config.Config{}),
+		WithEnviron([]string{}),
+		WithIsFree(func(p int) bool { return true }),
+	)
+
+	opts := Options{
+		PortEnv: []string{"BAD-KEY"},
+		Range:   "10000-11000",
+		CWD:     "/test/path",
+	}
+
+	err := app.Run(context.Background(), opts, []string{})
+	if err == nil {
+		t.Fatal("Run() expected error for invalid manual key")
+	}
+	if !strings.Contains(err.Error(), `invalid env key "BAD-KEY"`) {
+		t.Fatalf("Run() error = %v", err)
+	}
+}

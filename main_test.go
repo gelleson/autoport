@@ -16,6 +16,8 @@ func TestParseCLIArgs(t *testing.T) {
 		"-i", "REDIS_",
 		"-i", "DB_",
 		"-p", "db",
+		"-k", "WEB_PORT",
+		"-k", "API_PORT",
 		"-r", "3000-4000",
 		"npm", "start",
 	})
@@ -34,6 +36,9 @@ func TestParseCLIArgs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(opts.Presets, []string{"db"}) {
 		t.Fatalf("parseCLIArgs() Presets = %v", opts.Presets)
+	}
+	if !reflect.DeepEqual(opts.PortEnv, []string{"WEB_PORT", "API_PORT"}) {
+		t.Fatalf("parseCLIArgs() PortEnv = %v", opts.PortEnv)
 	}
 	if !reflect.DeepEqual(cmdArgs, []string{"npm", "start"}) {
 		t.Fatalf("parseCLIArgs() args = %v", cmdArgs)

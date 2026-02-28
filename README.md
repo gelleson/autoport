@@ -19,6 +19,28 @@ It discovers `PORT` and `*_PORT` environment keys, assigns free ports based on y
 go install github.com/gelleson/autoport@latest
 ```
 
+Single-line installer (macOS/Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gelleson/autoport/main/scripts/install.sh | sh
+```
+
+Install script options:
+
+```bash
+# Install a specific release tag
+curl -fsSL https://raw.githubusercontent.com/gelleson/autoport/main/scripts/install.sh | sh -s -- v1.0.0
+
+# Install to a custom directory
+INSTALL_DIR="$HOME/.local/bin" curl -fsSL https://raw.githubusercontent.com/gelleson/autoport/main/scripts/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/gelleson/autoport/main/scripts/install.ps1 | iex
+```
+
 ## Quick Start
 
 Run an app with deterministic ports:
